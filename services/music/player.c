@@ -504,6 +504,38 @@ static bool submit_slot(struct player_slot *s){
     if(ln_audio_submit(s->pcm,s->buffered)!=s->buffered){fail(14);return false;}
     s->submitted+=s->buffered;submitted+=s->buffered;s->buffered=0;return true;
 }
+static bool next_joinable(const struct player_slot *s){
+    const struct player_slot *next=&slots[audible^1u];
+    return have_next&&!join_pending&&!finish_sent&&state.next_phase==LN_PLAYER_NEXT_READY&&
+        next->buffered&&next->rate==s->rate&&
+        next->dsp.config.headroom_db_tenths==s->dsp.config.headroom_db_tenths;
+}
+static bool join_ready(struct player_slot *s,const struct ln_audio_status *audio){
+    if(!next_joinable(s))return false;
+    struct player_slot *next=&slots[audible^1u];if(audio->free_frames<next->buffered)return false;
+    join_boundary=submitted;join_gapless=audio->queued>0;join_underruns=audio->underruns;
+    feed=audible^1u;join_pending=true;state.next_phase=LN_PLAYER_NEXT_COMMITTED;
+    (void)submit_slot(next);
+    /* A fully decoded short next track can end in the same DMA block as the
+     * old tail. Its final marker cannot wait for audible promotion. */
+    if(next->phase==SLOT_EOF&&!next->buffered){ln_audio_finish();finish_sent=true;}
+    return true;
+}
+static void prepare_eof_start(struct player_slot *s,const struct ln_audio_status *audio){
+    if(s->phase!=SLOT_EOF||s->buffered||finish_sent)return;
+    if(join_pending){ln_audio_finish();finish_sent=true;return;}
+    /* A whole short track may finish during the sink's blocking startup.
+     * Append an already prepared join, or fence EOF before starting DMA. */
+    if(join_ready(s,audio)||next_joinable(s))return;
+    ln_audio_finish();finish_sent=true;
+}
+static bool close_eof(struct player_slot *s,const struct ln_audio_status *audio){
+    if(state.phase!=LN_PLAYER_PLAY||s->phase!=SLOT_EOF||s->buffered||finish_sent||
+       audio->queued>startup_frames(audio->rate)||next_joinable(s))return false;
+    /* Pending metadata/read owners must not postpone the final DMA marker
+     * until the ring is empty. Late next tracks use the normal drained join. */
+    ln_audio_finish();finish_sent=true;state.phase=LN_PLAYER_DRAIN;return true;
+}
 static void refresh(const struct ln_audio_status *audio){
     consumed+=(uint32_t)(audio->consumed-last_consumed);last_consumed=audio->consumed;state.underruns=audio->underruns;
     if(join_pending&&consumed>join_boundary){
@@ -653,7 +685,8 @@ bool ln_player_pause(bool pause){
         if(!synchronize_gain()){
             seek_paused=false;state.phase=LN_PLAYER_PRIME;return true;
         }
-        if(!ln_audio_start())return false;eof_waiting=false;state.phase=LN_PLAYER_PLAY;return true;
+        prepare_eof_start(&slots[feed],&audio);
+        if(!ln_audio_start())return false;eof_waiting=false;state.phase=finish_sent?LN_PLAYER_DRAIN:LN_PLAYER_PLAY;return true;
     }return false;
 }
 bool ln_player_toggle_pause(void){
@@ -786,6 +819,7 @@ static void player_advance(void){
         state.rate=s->rate;state.frames=s->decoder.total_frames;state.phase=LN_PLAYER_PRIME;
     }
     ln_audio_snapshot(&audio);
+    if(close_eof(s,&audio))return;
     /* Current decoding has priority below the read runway. An already admitted
      * exact read must drain, but its decoder cannot chain another low-PCM read. */
     if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_OPENING&&
@@ -822,11 +856,14 @@ static void player_advance(void){
             }
 #endif
             if(!synchronize_gain())return;
-            if(!ln_audio_start()){fail(15);return;}state.phase=LN_PLAYER_PLAY;
+            prepare_eof_start(s,&audio);
+            if(!ln_audio_start()){fail(15);return;}state.phase=finish_sent?LN_PLAYER_DRAIN:LN_PLAYER_PLAY;
+            if(finish_sent||join_pending)return;
         }
     }
     if(s->phase!=SLOT_EOF){eof_waiting=false;return;}
     ln_audio_snapshot(&audio);
+    if(close_eof(s,&audio))return;
     if(!eof_waiting){
         /* Ring capacity bounds scaled to 65,536,000; supported rates bound
          * the remainder product to 95,999,000. Preserve exact microseconds
@@ -841,13 +878,7 @@ static void player_advance(void){
     if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_OPENING){
         if(io_owner==&slots[audible^1u]||(!io_owner&&state.phase==LN_PLAYER_PLAY&&runway)){advance_next();return;}
     }
-    if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_READY&&slots[audible^1u].rate==s->rate&&
-       slots[audible^1u].dsp.config.headroom_db_tenths==s->dsp.config.headroom_db_tenths){
-        struct player_slot *next=&slots[audible^1u];ln_audio_snapshot(&audio);if(audio.free_frames<next->buffered)return;
-        join_boundary=submitted;join_gapless=audio.queued>0&&!finish_sent;join_underruns=audio.underruns;
-        feed=audible^1u;join_pending=true;state.next_phase=LN_PLAYER_NEXT_COMMITTED;
-        (void)submit_slot(next);return;
-    }
+    if(next_joinable(s)){ln_audio_snapshot(&audio);(void)join_ready(s,&audio);return;}
     /* Metadata/history may still be arriving for a track shorter than the
      * usual runway. Waiting is bounded by audio already queued, never silence. */
     if(next_expected&&!have_next&&!join_pending&&runway)return;
