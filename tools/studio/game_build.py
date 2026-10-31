@@ -202,7 +202,24 @@ def build_library(target, output):
         games.append({key:report[key] for key in ('id','filename','sha256','author','license','legacy')})
     metadata=dict(format='LNGAMES',version=1,target=target,games=games)
     (output/'library.json').write_text(json.dumps(metadata,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+    write_library_notices(output)
     return dict(directory=str(output),games=games)
+
+
+def write_library_notices(directory):
+    directory=Path(directory)
+    (directory/'LICENSE.txt').write_bytes((ROOT/'LICENSE').read_bytes())
+    (directory/'NOTICE.txt').write_text(
+        'Linnet native games\nCopyright (C)2026 jspann21 and Linnet contributors.\n'
+        'Licensed under GPL-3.0-or-later; see LICENSE.txt.\n'
+        "Solitaire court art: Austin Gabriel's Public Domain Playing Cards (CC0).\n"
+        'https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards\n'
+        'Matching game source, SDK and preparation tools are in the Linnet source release.\n',encoding='utf-8')
+
+
+def library_files(directory,target):
+    directory=Path(directory);packages=library(directory,target)
+    return [*packages.values(),directory/'library.json',directory/'LICENSE.txt',directory/'NOTICE.txt']
 
 
 def library(directory,target):
@@ -214,6 +231,10 @@ def library(directory,target):
             or value['format']!='LNGAMES' or value['version']!=1 or value['target']!=target
             or not isinstance(value['games'],list) or len(value['games'])>128):
         raise ValueError('Incompatible prepared game library')
+    for name in ('LICENSE.txt','NOTICE.txt'):
+        notice=directory/name
+        if notice.is_symlink() or not notice.is_file() or not 0<notice.stat().st_size<=65536:
+            raise ValueError('Prepared game library notice is missing or unsafe')
     result={};filenames=set()
     for item in value['games']:
         if not isinstance(item,dict) or set(item)!={'id','filename','sha256','author','license','legacy'}:

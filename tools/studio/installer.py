@@ -905,11 +905,11 @@ def _persist_artifacts(artifacts, transaction):
                 raise OSError("saved installer artifact failed verification: " + name)
         persisted[key] = str(target.resolve())
     if artifacts.get('game_library'):
-        from tools.studio.game_build import library
+        from tools.studio.game_build import library,library_files
         target_id=inspect_image(Path(artifacts['os_image']).read_bytes())['target_id']
-        source=Path(artifacts['game_library']);packages=library(source,target_id)
+        source=Path(artifacts['game_library']);packages=library_files(source,target_id)
         game_destination=destination/'games';game_destination.mkdir(exist_ok=True)
-        for path in [*packages.values(),source/'library.json']:
+        for path in packages:
             target=game_destination/path.name;data=path.read_bytes()
             if target.exists():
                 if target.is_symlink() or target.read_bytes()!=data:raise ValueError('Saved game artifact differs')

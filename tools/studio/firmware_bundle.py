@@ -52,12 +52,10 @@ def create(target, output, jobs=2):
     check_packaged_assets(ROOT)
     payloads = {"README.txt": PACKAGE_README.encode("utf-8")}
     if target_spec(target)['capabilities']['games']:
-        from tools.studio.game_build import build_library,library
+        from tools.studio.game_build import build_library,library_files
         prepared=ROOT/'out/game-packages'/target
         build_library(target,prepared)
-        paths=library(prepared,target)
-        payloads['games/library.json']=(prepared/'library.json').read_bytes()
-        for path in paths.values():payloads['games/'+path.name]=path.read_bytes()
+        for path in library_files(prepared,target):payloads['games/'+path.name]=path.read_bytes()
     for kind, selector in (("os", "none"), ("boot", "none"), ("boot", "rockbox")):
         report = build("release", target, verify=True, kind=kind, boot_selector=selector, jobs=jobs)
         name = OS_NAME if kind == "os" else BOOT_NAMES[selector]
@@ -113,7 +111,8 @@ def load(path, identity, installation_method, *, verify_only=False):
             names={item.filename for item in entries}
             game_files={name for name in names if name.startswith('games/')}
             from tools.content.game_package import FILE_PATTERN,CATALOGUE_MAX
-            if (len(game_files)>CATALOGUE_MAX+1 or any(name!='games/library.json' and
+            notice_files={'games/LICENSE.txt','games/NOTICE.txt'}
+            if (len(game_files)>CATALOGUE_MAX+3 or any(name not in notice_files|{'games/library.json'} and
                     not FILE_PATTERN.fullmatch(name.removeprefix('games/')) for name in game_files)
                     or game_files and 'games/library.json' not in game_files):
                 raise ValueError('Invalid prepared games in firmware bundle')
@@ -151,7 +150,7 @@ def load(path, identity, installation_method, *, verify_only=False):
         if game_files:
             from tools.studio.game_build import library
             prepared=library(staging/'games',identity['target_id'])
-            if game_files!={'games/library.json'}|{'games/'+p.name for p in prepared.values()}:
+            if game_files!={'games/library.json','games/LICENSE.txt','games/NOTICE.txt'}|{'games/'+p.name for p in prepared.values()}:
                 raise ValueError('Firmware game library contains unlisted files')
         def artifacts(directory):
             return dict(os_image=str(directory / (OS_NAME + ".los")), os_report=str(directory / (OS_NAME + ".json")),
