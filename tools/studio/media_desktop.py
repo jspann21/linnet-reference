@@ -250,6 +250,8 @@ class MediaWindow(
             self.stack.setCurrentWidget(self.setup)
             if self.identity and self.review is not None:
                 self.render_setup()
+                if self.review is not None and not self.busy:
+                    self.show_progress('Device setup is ready.')
             elif self.identity and self.device_connected and not self.busy:
                 identity = self.identity
                 self.work('setup', lambda: installer.assess(identity), 'Checking installed software…')
@@ -257,7 +259,9 @@ class MediaWindow(
             self.stack.setCurrentWidget(self.preferences)
             self.refresh_cache()
         self.update_controls()
-        if (self.cache_library_dirty and page != 'Settings' and self.identity and
+        # Link setup leaves the collection unread. Setup and Trash have their
+        # own readers; returning to removal must not wait for a media scan.
+        if (self.cache_library_dirty and page not in ('Settings', 'iPod setup', 'Trash') and self.identity and
                 self.device_connected and not self.busy):
             self.refresh()
 
