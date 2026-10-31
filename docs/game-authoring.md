@@ -2,8 +2,7 @@
 
 Games are native ARM `.LGM` files, loaded individually from `/.LINNET/GAMES`.
 Photo, Video and Classic use separate target builds. Adding a game requires no
-firmware registry entry or rebuild. Performance takes priority over author
-convenience: there is no interpreter or general game engine.
+firmware registry entry or rebuild. There is no interpreter or general game engine.
 
 ## Start a project
 
