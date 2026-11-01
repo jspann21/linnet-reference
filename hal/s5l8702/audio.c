@@ -2,6 +2,7 @@
 #include "hal/api/click_pcm.h"
 #include "hal/api/core.h"
 #include "hal/codecs/codec.h"
+#include "hal/codecs/cs42l55.h"
 #include "hal/arm926/cache.h"
 #include "board.h"
 #include "irq.h"
@@ -40,7 +41,7 @@ static volatile struct ln_audio_status status;
 static volatile uint32_t head,tail,inflight,armed,expected,previous,drain_until;
 static volatile uint32_t inflight_last;
 static volatile bool active,real,finishing,pause_pending,draining,starved,warming,start_armed,drain_ready,tail_ramp;
-static bool owned,codec_ready,lineout,muted,amplifier_open;
+static bool owned,codec_ready,lineout,muted,amplifier_open,clock_valid,powerdown_ready;
 static uint32_t frame_q12;
 static volatile uint32_t mute_until;
 static void ramp_to_silence(uint32_t sample) {
@@ -136,26 +137,46 @@ bool ln_audio_halt(void) {
     }
     /* Retain the headphone PGA across warm stream changes. The completed
      * digital ramp and zero DMA provide silence; Stop still mutes/powers off. */
+    if(codec_ready&&(status.fault||!ok)){
+        if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
+        else ok=false;
+    }
     uint32_t flags=ln_s5l_irq_save();ln_s5l_irq_enable(16,false);
     bool stopped=ln_s5l_pcm_stop();
     if(stopped){active=draining=pause_pending=warming=click_playing=false;head=tail=inflight=0;status.initialized=status.playing=status.paused=0;}
     else fault(3);
-    ln_s5l_irq_restore(flags);return ok && stopped;
+    ln_s5l_irq_restore(flags);
+    if(!stopped&&codec_ready){
+        /* pcm_stop may have raised the first fault after the earlier check. */
+        if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
+    }
+    return ok && stopped;
+}
+static bool shutdown_codec(void){
+    /* A failed rate change may leave old codec dividers with the new MCLK.
+     * At the8MHz/32kHz board setting an old8kHz divider yields5.33kHz, so
+     * 193ms covers1024frames plus1ms even in that uncertain configuration. */
+    uint32_t settle=clock_valid?((BLOCK*frame_q12+4095u)>>12)+1000u:193000u;
+    if(!powerdown_ready){
+        if(!ln_cs42l55_shutdown(ln_s5l_board_codec_write,settle)){
+            /* Partial preparation is not a reusable warm configuration. */
+            codec_ready=false;status.fault=4;return false;
+        }
+        powerdown_ready=true;
+    }
+    codec_ready=amplifier_open=false;muted=true;
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    if(!ln_s5l_board_audio_clock_off()){clock_valid=false;status.fault=4;return false;}
+#endif
+    owned=clock_valid=powerdown_ready=false;return true;
 }
 bool ln_audio_stop(void) {
     click_owned=false;
     if(!owned)return true;
     if(!ln_audio_halt())return false;
-    bool ok;
-#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
     /* Even a partially initialized codec must acknowledge power-down before
      * its MCLK can stop. A failed stop preserves ownership for recovery. */
-    ok=ln_codec_off(ln_s5l_board_codec_write);
-    if(!ok||!ln_s5l_board_audio_clock_off())return false;
-#else
-    ok=!codec_ready || ln_codec_off(ln_s5l_board_codec_write);
-#endif
-    codec_ready=owned=amplifier_open=false;return ok;
+    return shutdown_codec();
 }
 bool ln_audio_init(uint32_t rate) {
     click_owned=false;
@@ -170,25 +191,25 @@ bool ln_audio_init(uint32_t rate) {
     tail_ramp=false;fade_remaining=0;
     owned=true;previous=0;frame_q12=period;mute_until=0;
     if(!warm) {
-        codec_ready=false;
+        codec_ready=clock_valid=powerdown_ready=false;
         if(!ln_s5l_board_audio_power(true) || !ln_core_delay_us(1000) ||
            !ln_s5l_board_audio_power(false) || !ln_core_delay_us(1000))goto failed;
     }
     if(!warm || old_rate!=rate) {
+        clock_valid=false;
         if(!ln_s5l_board_audio_clock(rate,&codec_rate))goto failed;
         if(warm) {if(!ln_codec_rate(ln_s5l_board_codec_write,codec_rate))goto failed;}
         else if(!ln_codec_init(ln_s5l_board_codec_write,codec_rate))goto failed;
+        clock_valid=true;
     }
     codec_ready=true;muted=true;if(!warm)amplifier_open=false;
     if(warm)status.volume_db_tenths=volume;
     else if(!ln_audio_volume(volume) || !ln_codec_lineout(ln_s5l_board_codec_write,lineout))goto failed;
     status.rate=rate;status.initialized=1;return true;
 failed:
-    (void)ln_s5l_pcm_stop();(void)ln_codec_mute(ln_s5l_board_codec_write,true);
-#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
-    if(ln_codec_off(ln_s5l_board_codec_write))(void)ln_s5l_board_audio_clock_off();
-#endif
-    codec_ready=amplifier_open=false;status.fault=4;return false;
+    if(ln_s5l_pcm_stop())(void)shutdown_codec();
+    else if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
+    status.fault=4;return false;
 }
 void ln_audio_click_stop(void){
     uint32_t flags=ln_s5l_irq_save();ln_pcm_click_clear(&click);ln_s5l_irq_restore(flags);

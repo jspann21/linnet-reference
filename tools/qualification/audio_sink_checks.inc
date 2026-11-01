@@ -12,6 +12,22 @@ static void audit_codec_write_event(uint8_t reg,uint16_t value){
     bool opening=reg==26u&&(audit_codec[reg]&128u)&&!(value&128u);
     bool current_real=real;
 #endif
+#ifndef AUDIT_PP
+    if(reg>=0x1a&&reg<=0x1d)audit_analog_at=audit_now;
+    if(reg==2u&&(value&1u)&&audit_codec_live){
+        unsigned rate=0;
+        switch(audit_codec[5]){
+        case 0x1d:rate=8000;break;case 0x1b:rate=11025;break;case 0x19:rate=12000;break;
+        case 0x15:rate=16000;break;case 0x13:rate=22050;break;case 0x11:rate=24000;break;
+        case 0x0d:rate=32000;break;case 0x0b:rate=44100;break;case 9:rate=48000;break;
+        }
+        uint64_t denominator=(uint64_t)rate*audit_mclk;
+        unsigned wait=denominator?(unsigned)(((uint64_t)1024*1000000u*12000000u+denominator-1u)/denominator)+1000u:193000u;
+        if(audit_now-audit_analog_at<wait||audit_codec[0x1a]!=0xc0||audit_codec[0x1b]!=0xc0||
+           audit_codec[0x1c]!=0xc0||audit_codec[0x1d]!=0xc0)audit_bad_powerdown++;
+    }
+    if(reg==2u)audit_codec_live=!(value&1u);
+#endif
     if(digital&&becomes_muted)audit_mute_at=audit_now;
     if(opening&&(!active||current_real))audit_open_without_zero++;
     if(opening)audit_analog_changes++;
@@ -136,7 +152,50 @@ int main(void){
         assert(!final.fault&&!final.underruns&&final.consumed==4096);
     }
     assert(ln_audio_stop());
+    ln_audio_click(0,4,-300);finish_drain();
+    audit_now+=500000u;ln_audio_service(audit_now);assert(!owned);
+#ifndef AUDIT_PP
+    for(unsigned failure=0;failure<2;failure++){
+        assert(ln_audio_init(44100));ln_audio_click(0,4,-300);finish_drain();
+        if(failure==0)audit_reject=0x1b;else audit_delay_fail=true;
+        assert(!ln_audio_stop()&&owned&&audit_codec_live);
+        audit_reject=-1;audit_delay_fail=false;assert(ln_audio_stop()&&!owned);
+    }
+#ifndef AUDIT_BASELINE
+    assert(ln_audio_init(44100));ln_audio_click(0,4,-300);finish_drain();
+    audit_clockoff_fail=true;assert(!ln_audio_stop()&&owned&&powerdown_ready&&audit_reset);
+    unsigned writes=audit_codec_writes;
+    audit_clockoff_fail=false;assert(ln_audio_stop()&&!owned&&!powerdown_ready);
+    assert(audit_codec_writes==writes); /* RESET-low retry does not touch I2C */
+    assert(ln_audio_init(44100)&&!powerdown_ready&&!audit_reset);
+    ln_audio_click(0,4,-300);finish_drain();
+    audit_reject=0x1b;assert(!ln_audio_stop()&&owned&&!codec_ready);
+    audit_reject=-1;assert(ln_audio_init(44100)&&codec_ready&&!powerdown_ready);
+    ln_audio_click(0,4,-300);finish_drain();assert(ln_audio_stop());
+#endif
+    for(unsigned rate=32000;rate<=48000;rate+=16000){
+        assert(ln_audio_init(8000));ln_audio_click(0,4,-300);finish_drain();
+        unsigned waited=audit_delay_total;
+        audit_reject=5;assert(!ln_audio_init(rate));audit_reject=-1;
+        assert(audit_delay_total-waited==193000u&&!owned&&!audit_bad_powerdown);
+    }
+#endif
+    assert(ln_audio_init(44100));ln_audio_click(0,4,-300);finish_drain();
+    audit_stop_fail=true;assert(!ln_audio_halt());
+#ifdef AUDIT_PP
+    assert(output_muted&&digital_muted);
+#else
+    assert(!amplifier_open&&muted);
+#endif
+    audit_stop_fail=false;assert(ln_audio_stop());
+    ln_audio_click(0,4,-300);fault(99);assert(ln_audio_halt());
+#ifdef AUDIT_PP
+    assert(digital_muted&&output_muted);
+#else
+    assert(muted&&!amplifier_open);
+#endif
     assert(audit_i2c_in_irq==0&&audit_open_without_zero==0&&audit_cut_before_ramp==0);
+    assert(!audit_bad_powerdown);
     puts("PASS complete unmuted contiguous feedback; paused music preserved; warm analog gain retained; EOF and stop");
     return 0;
 }

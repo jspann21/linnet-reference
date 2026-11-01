@@ -20,6 +20,7 @@ def main():
         file=f'hal/{family}/audio.c'
         source=subprocess.check_output(['git','show',f'{args.baseline}:{file}'],cwd=ROOT,text=True) if args.baseline else (ROOT/file).read_text()
         prefix='#include <stdint.h>\n#include <stdbool.h>\n'
+        if args.baseline:prefix+='#define AUDIT_BASELINE 1\n'
         if family=='pp502x':
             prefix+='#define AUDIT_PP 1\n'
             source=source.replace('#define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))','#define REG(a) (*audit_register(a))')
@@ -29,8 +30,12 @@ def main():
         src.write_text(prefix+'#include "tools/qualification/audio_sink_mocks.inc"\n'+source+'\n#include "tools/qualification/audio_sink_checks.inc"\n')
         headers=sorted((ROOT/f'out/dev/{target}/os/runs').glob('*/generated/linnet_target.h'),key=lambda p:p.stat().st_mtime)
         if not headers:raise RuntimeError(f'Build {target} once to generate target headers')
+        codec_source=ROOT/f'hal/codecs/{codec}.c'
+        if args.baseline:
+            codec_source=output/f'{codec}-baseline.c'
+            codec_source.write_text(subprocess.check_output(['git','show',f'{args.baseline}:hal/codecs/{codec}.c'],cwd=ROOT,text=True))
         exe=output/f'{codec}.exe'
-        subprocess.run([compiler,'-O2','-Wall','-Wextra','-Werror','-Wno-unused-function','-I'+str(ROOT),'-I'+str(headers[-1].parent),f'-I{ROOT}/hal/{family}','-DLINNET_PROFILE_RELEASE=1',str(src),str(ROOT/f'hal/codecs/{codec}.c'),'-o',str(exe)],cwd=ROOT,check=True)
+        subprocess.run([compiler,'-O2','-Wall','-Wextra','-Werror','-Wno-unused-function','-I'+str(ROOT),'-I'+str(headers[-1].parent),f'-I{ROOT}/hal/{family}',f'-I{ROOT}/hal/codecs','-DLINNET_PROFILE_RELEASE=1','-DLINNET_IMAGE_OS=1',str(src),str(codec_source),'-o',str(exe)],cwd=ROOT,check=True)
         result=subprocess.run([str(exe)],cwd=ROOT,text=True,capture_output=True)
         print(codec,result.stdout,result.stderr,flush=True)
         (output/f'{codec}-{args.baseline or "current"}.json').write_text(json.dumps(dict(returncode=result.returncode,stdout=result.stdout,stderr=result.stderr),indent=2))

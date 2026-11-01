@@ -154,6 +154,9 @@ bool ln_audio_halt(void)
     /* A warm stream replacement needs digital silence, not a headphone PGA
      * mute/unmute cycle. Keep its analog bias and gain latched until Stop. */
     bool muted=digital_muted||ln_codec_digital_mute(codec,true);digital_muted=muted;
+    if(state.fault||!settled){
+        muted=ln_codec_mute(codec,true);output_muted=digital_muted=muted;
+    }
 #else
     bool muted=ln_codec_mute(codec,true);output_muted=digital_muted=muted;
 #endif
@@ -161,7 +164,11 @@ bool ln_audio_halt(void)
     bool idle=quiesce();
     state.playing=0;state.paused=0;pause_pending=draining=warming=click_playing=false;
     ln_core_irq_restore(flags);
-    if(!idle)return false; /* Never reuse a DMA source until BUSY clears. */
+    if(!idle){
+        /* quiesce itself can be the operation that first reports a fault. */
+        output_muted=digital_muted=ln_codec_mute(codec,true);
+        return false; /* Never reuse a DMA source until BUSY clears. */
+    }
     IIS&=~(1u<<29);FIFO|=1u<<8;
     state.initialized=0;head=tail=0;finishing=false;completion_seen=false;
     halted=muted&&settled;

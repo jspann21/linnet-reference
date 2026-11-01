@@ -1,6 +1,6 @@
 /* CS42L55 playback configuration: Cirrus DS773F1, sections 4.11/4.13/6.
  * Register compensation is manufacturer-specified data. */
-#include "codec.h"
+#include "cs42l55.h"
 #include "hal/api/core.h"
 static bool output_muted=true,lineout_enabled;
 static bool lineout(ln_codec_writer write,bool enabled,bool mute) {
@@ -48,10 +48,26 @@ bool ln_codec_mute(ln_codec_writer write,bool mute) {
 bool ln_codec_digital_mute(ln_codec_writer write,bool mute) {
     return write(0x0f,mute?3:0);
 }
-bool ln_codec_off(ln_codec_writer write) {
-    bool muted=ln_codec_mute(write,true),line=ln_codec_lineout(write,false),power=write(2,0x0f);
-    return muted && line && power;
+bool ln_cs42l55_shutdown(ln_codec_writer write,uint32_t settling_us) {
+    /* DS773F1 4.11.1: mute AND maximally attenuate all analog outputs before
+     * PDN. Do not reuse output_muted: a prior partial I2C write can set it.
+     * ANLGZC can defer these controls for 1024 LRCK periods (6.7.2). */
+    bool digital=ln_codec_digital_mute(write,true);
+    bool hp_left=write(0x1a,0xc0),hp_right=write(0x1b,0xc0);
+    bool line_left=write(0x1c,0xc0),line_right=write(0x1d,0xc0);
+    if(!digital||!hp_left||!hp_right||!line_left||!line_right)return false;
+    output_muted=true;
+    /* The core delay API accepts at most100ms per call. */
+    while(settling_us){
+        uint32_t delay=settling_us>100000u?100000u:settling_us;
+        if(!ln_core_delay_us(delay))return false;
+        settling_us-=delay;
+    }
+    /* No analog gain/mute write after the settling wait. */
+    if(!write(3,0xaf)||!write(2,0x0f))return false;
+    lineout_enabled=false;return true;
 }
+bool ln_codec_off(ln_codec_writer write){return ln_cs42l55_shutdown(write,193000u);}
 bool ln_codec_init(ln_codec_writer write,uint32_t rate) {
     output_muted=true;lineout_enabled=false;
     if(!ln_codec_rate_supported(rate) || !write(2,0x0f))return false;
