@@ -150,7 +150,13 @@ bool ln_audio_halt(void)
         }
         settled=!state.playing&&!click_playing&&!state.fault;
     }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    /* A warm stream replacement needs digital silence, not a headphone PGA
+     * mute/unmute cycle. Keep its analog bias and gain latched until Stop. */
+    bool muted=digital_muted||ln_codec_digital_mute(codec,true);digital_muted=muted;
+#else
     bool muted=ln_codec_mute(codec,true);output_muted=digital_muted=muted;
+#endif
     uint32_t flags=ln_core_irq_save();
     bool idle=quiesce();
     state.playing=0;state.paused=0;pause_pending=draining=warming=click_playing=false;
@@ -205,7 +211,7 @@ bool ln_audio_init(uint32_t rate)
     if(!ln_codec_init(codec,rate)||!ln_codec_lineout(codec,lineout_enabled)||!ln_audio_volume(-400))goto failed;
     codec_ready=true;
 stream_ready:
-    digital_muted=output_muted=true;mute_until=0;drain_until=0;
+    digital_muted=true;if(!warm)output_muted=true;mute_until=0;drain_until=0;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
     fade_remaining=0;
 #endif
@@ -298,8 +304,10 @@ static bool start_output(bool media)
     while(state.silence_frames==zeros)if(!startup_wait(began,timeout))goto failed;
     /* Output gain is restored immediately under digital mute after a zero
      * block has flushed the FIFO, rather than waiting for a zero crossing. */
-    output_muted=false;
-    if(!ln_codec_analog_mute(codec,false)){fault(3);goto failed;}
+    if(output_muted){
+        output_muted=false;
+        if(!ln_codec_analog_mute(codec,false)){fault(3);goto failed;}
+    }
     uint32_t ready=ln_time_us()+1000u;
     while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout))goto failed;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
@@ -356,7 +364,7 @@ void ln_audio_irq(void)
     if(tail_ramp){for(uint32_t i=0;i<64u;i++)native(silence)[i]=0;tail_ramp=false;}
     active=false;inflight=0;state.last_irq_us=started;
     if(draining)drain_ready=true;
-    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(state.playing&&finishing&&tail==head)||(click_block&&!state.playing))){
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(state.playing&&finishing&&tail==head)||(click_block&&!state.playing&&!click.left))){
         pause_pending=false;draining=true;drain_ready=false;drain_until=started;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
         /* Even if soft mute has not settled, the last PCM sample reaches
@@ -381,10 +389,13 @@ void ln_audio_service(uint32_t now)
         else{digital_muted=true;mute_until=ln_time_us()+10000u;}
     }
     if(!state.fault&&draining&&drain_ready&&(int32_t)(now-drain_until)>=0&&(int32_t)(now-mute_until)>=0){
+#if !defined(LINNET_TARGET_VIDEO5G_M25)
         if(!output_muted){
             if(!ln_codec_analog_mute(codec,true))fault(3);
             else{output_muted=true;drain_until=ln_time_us()+1000u;}
-        }else{
+        }else
+#endif
+        {
             flags=ln_core_irq_save();
             if(quiesce()){
                 IIS&=~(1u<<29);FIFO|=1u<<8;

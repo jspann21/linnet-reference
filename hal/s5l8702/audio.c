@@ -22,6 +22,8 @@ extern uint32_t ln_time_us(void);
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
 static uint32_t ring[LINNET_AUDIO_RING_FRAMES] AUDIO_MEMORY;
 static uint32_t click_pcm[BLOCK] AUDIO_MEMORY;
+static uint32_t onset[64] AUDIO_MEMORY;
+static volatile uint32_t fade_remaining;
 static volatile struct ln_pcm_click click;
 static bool click_owned;
 static volatile bool click_block,click_playing;
@@ -78,7 +80,23 @@ static bool arm(bool continuing) {
         if(!silence_only&&!click_block){if(!starved)status.underruns++;starved=true;}
     }
     if(!count)return false;
+    /* Bound feedback synthesis and cache cleaning before rearming DMA. The
+     * rest of a music block can continue directly from the immutable ring. */
+    if(!silence_only&&click.left){
+        if(count>click.left)count=click.left;
+        if(count>64u)count=64u;
+    }
     const int16_t *samples=(const int16_t *)(real?ring+offset:silence);
+    if(real&&fade_remaining){
+        if(count>fade_remaining)count=fade_remaining;
+        for(uint32_t i=0;i<count;i++){
+            uint32_t sample=((const uint32_t *)samples)[i];
+            int32_t gain=(int32_t)(64u-fade_remaining+i);
+            onset[i]=(uint16_t)((int16_t)sample*gain/64)|
+                ((uint32_t)(uint16_t)((int16_t)(sample>>16)*gain/64)<<16);
+        }
+        fade_remaining-=count;samples=(const int16_t *)onset;
+    }
     if(!silence_only&&ln_pcm_click_mix(&click,click_pcm,(const uint32_t *)samples,count))samples=(const int16_t *)click_pcm;
     inflight_last=real?((const uint32_t *)samples)[count-1u]:0;
     bool ok=continuing?ln_s5l_pcm_rearm(samples,count):ln_s5l_pcm_begin(samples,count);
@@ -116,10 +134,8 @@ bool ln_audio_halt(void) {
         }
         if(status.playing || click_playing || status.fault)ok=false;
     }
-    if(codec_ready && amplifier_open){
-        if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
-        else ok=false;
-    }
+    /* Retain the headphone PGA across warm stream changes. The completed
+     * digital ramp and zero DMA provide silence; Stop still mutes/powers off. */
     uint32_t flags=ln_s5l_irq_save();ln_s5l_irq_enable(16,false);
     bool stopped=ln_s5l_pcm_stop();
     if(stopped){active=draining=pause_pending=warming=click_playing=false;head=tail=inflight=0;status.initialized=status.playing=status.paused=0;}
@@ -151,7 +167,7 @@ bool ln_audio_init(uint32_t rate) {
     if(!ln_audio_halt())return false;
     status=(struct ln_audio_status){0};head=tail=inflight=0;active=draining=finishing=pause_pending=starved=warming=drain_ready=false;
     for(uint32_t i=0;i<BLOCK;i++)silence[i]=0;
-    tail_ramp=false;
+    tail_ramp=false;fade_remaining=0;
     owned=true;previous=0;frame_q12=period;mute_until=0;
     if(!warm) {
         codec_ready=false;
@@ -253,18 +269,21 @@ static bool start_output(bool media) {
     uint32_t began=ln_time_us(),timeout=4u*block_us+30000u;
     while(status.silence_frames==zeros)if(!startup_wait(began,timeout))goto failed;
     /* A partial unmute counts as open until a complete mute is acknowledged. */
-    amplifier_open=true;
-    if(!ln_codec_analog_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+    if(!amplifier_open){
+        amplifier_open=true;
+        if(!ln_codec_analog_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+    }
     uint32_t ready=ln_time_us()+block_us+1000u;
     while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout))goto failed;
-    warming=false;
-    while(!start_armed)if(!startup_wait(began,timeout))goto failed;
-    /* Release the digital ramp only once real PCM is clocking, so its fade
-     * cannot finish on silence before the first nonzero sample arrives. */
-    if(!draining){
-        muted=false;
-        if(!ln_codec_digital_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
-    }
+    /* A feedback tone is only four milliseconds long. It must not be sent
+     * while the codec is still ramping out of mute. Release onto zero DMA
+     * and clock a complete settling block before arming any nonzero PCM. */
+    muted=false;
+    if(!ln_codec_digital_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+    ready=ln_time_us()+block_us+1000u;
+    while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout+block_us+1000u))goto failed;
+    fade_remaining=64u;warming=false;
+    while(!start_armed)if(!startup_wait(began,timeout+block_us+1000u))goto failed;
     return true;
 failed:
     warming=false;ln_audio_service(ln_time_us());return false;
@@ -296,7 +315,7 @@ void ln_audio_irq(void) {
     if(tail_ramp){for(uint32_t i=0;i<64u;i++)silence[i]=0;tail_ramp=false;}
     active=false;inflight=0;status.last_irq_us=started;
     if(draining)drain_ready=true;
-    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(status.playing&&finishing&&head==tail)||(click_block&&!status.playing))){
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(status.playing&&finishing&&head==tail)||(click_block&&!status.playing&&!click.left))){
         /* The first deadline is "now", not zero: zero is in the future for
          * signed wrap-safe comparisons during the timer's upper half. */
         pause_pending=false;draining=true;drain_ready=false;drain_until=started;
@@ -319,20 +338,14 @@ void ln_audio_service(uint32_t now) {
         if(!muted)fault(4);
         else mute_until=ln_time_us()+((BLOCK*frame_q12+4095u)>>12);
     }
-    /* I2C remains in foreground. Close the analog path after the digital
-     * ramp, then leave LRCK running for its zero-cross timeout (1024 frames).
-     * Keeping codec bias powered avoids a fresh power-up on every resume. */
+    /* Finish clocking digital silence before stopping DMA. Leave the analog
+     * gain/mute latched across Pause and warm track changes. */
     if(!status.fault && draining && drain_ready && (int32_t)(now-drain_until)>=0 &&
        (int32_t)(now-mute_until)>=0) {
-        if(amplifier_open){
-            if(!ln_codec_analog_mute(ln_s5l_board_codec_write,true))fault(4);
-            else{amplifier_open=false;drain_until=ln_time_us()+((BLOCK*frame_q12+4095u)>>12)+1000u;}
-        }else{
-            flags=ln_s5l_irq_save();
-            draining=click_playing=false;status.playing=0;status.paused=1;
-            if(!ln_s5l_pcm_stop())fault(3);else{active=false;inflight=0;}
-            ln_s5l_irq_restore(flags);
-        }
+        flags=ln_s5l_irq_save();
+        draining=click_playing=false;status.playing=0;status.paused=1;
+        if(!ln_s5l_pcm_stop())fault(3);else{active=false;inflight=0;}
+        ln_s5l_irq_restore(flags);
     }
     if(status.fault && codec_ready && amplifier_open){
         if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
