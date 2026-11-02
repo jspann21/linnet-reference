@@ -125,6 +125,7 @@ pause playback.
 All four targets include the click controls below.
 
 Clicker turns feedback on or off while preserving output, pitch and volume.
+Play/Pause and Next/Previous in Now Playing do not produce click feedback.
 Click output selects Both, Speaker, Headphones, or Auto. Both uses the speaker
 and connected headphones; Speaker always uses the internal piezo; Headphones
 stays silent when unplugged. Auto uses the speaker without headphones and

@@ -461,12 +461,17 @@ static void apply(uint32_t kind,int32_t value){
         ln_music_search_cancel_frame_defer();
 #endif
 #if defined(LINNET_HARDWARE_CLICKER)
+    uint32_t feedback_pressed=kind==LN_INPUT_BUTTON?((uint32_t)value&~shell->buttons):0;
+    /* Transport commands must not enqueue a tone that Pause can cut short
+     * or a track change happens to cancel. Navigation keeps its feedback. */
+    bool quiet_transport=scene_is(LN_UI_SCENE_NOW_PLAYING)&&feedback_pressed&&
+        !(feedback_pressed&~(LN_BUTTON_PLAY|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     bool changing_click=kind==LN_INPUT_BUTTON&&!shell->hold&&
         scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_sound_menu_click(ln_music_sound_action(shell->selected))&&
         ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     if((kind==LN_INPUT_HOLD&&value)||
        (kind==LN_INPUT_HEADPHONE&&((value!=0)!=(shell->headphones!=0))))click_feedback_stop();
-    else if(!changing_click&&!scene_is(LN_UI_SCENE_GAME_PLAY)&&!shell->hold&&
+    else if(!quiet_transport&&!changing_click&&!scene_is(LN_UI_SCENE_GAME_PLAY)&&!shell->hold&&
             kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))
         click_feedback();
 #endif
