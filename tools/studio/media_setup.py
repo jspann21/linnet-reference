@@ -32,6 +32,32 @@ class SetupWorkspace:
         self.review = result; self.update_trash_badge(result.get('trash'))
         self.render_setup(); self.show_progress('Device setup is ready.')
 
+    def _complete_uninstall(self, result):
+        identity = result.get('reconnected_identity') or self.identity
+        self.transition_device(identity, reset=True)
+        self.last_preparation = None
+        self.prep_results.clear(); self.prep_results.hide()
+        self.update_trash_badge(dict(count=0, unreadable=0))
+        self.cache_library_dirty = True
+        # Removal is complete. Refresh only setup; verifying all remaining
+        # media can be slow and must not obscure success or retain Trash rows.
+        def inspect():
+            try:
+                review = installer.assess(identity)
+            except (OSError, RuntimeError, ValueError) as error:
+                raise RuntimeError('Linnet was removed, but setup could not be refreshed: ' + str(error)) from error
+            return dict(review=review, summary=result['summary'])
+        self.work('uninstall_setup', inspect, result['summary'])
+
+    def _complete_uninstall_setup(self, result):
+        self.identity = result['review']['identity']
+        self.identity['linnet'] = result['review']['linnet']
+        self.identity['default_boot'] = installer.default_boot(result['review'])
+        self.update_device()
+        self._complete_setup(result['review'])
+        self.navigate('iPod setup')
+        self.show_progress(result['summary'])
+
     def _complete_link_setup(self, result):
         self.transition_device(result['reconnected_identity'])
         self.device_name.setText(self.device_title(self.identity))

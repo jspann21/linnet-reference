@@ -340,11 +340,11 @@ class DeviceWorkspace:
         return bool(first and second) and all(first.get(key) == second.get(key)
             for key in ('root', 'disk_serial', 'volume_serial', 'target_id'))
 
-    def transition_device(self, identity):
+    def transition_device(self, identity, *, reset=False):
         """Clear device-derived state while retaining a draft for its own iPod."""
         self.link_connection = None
         self.apple_font_result = None
-        if self.same_device(self.identity, identity):
+        if self.same_device(self.identity, identity) and not reset:
             self.identity = identity
             return
         self.build_editor_open = False

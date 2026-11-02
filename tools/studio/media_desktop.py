@@ -464,6 +464,7 @@ class MediaWindow(
             'recover_publication': self._complete_recover_publication,
             'trash': self._complete_trash, 'setup': self._complete_setup,
             'uninstall_trash': self._complete_uninstall_trash,
+            'uninstall': self._complete_uninstall, 'uninstall_setup': self._complete_uninstall_setup,
             'link_setup': self._complete_link_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
@@ -471,7 +472,7 @@ class MediaWindow(
             'apple_font_install': self._complete_apple_font,
             'apple_font_remove': self._complete_apple_font,
         }
-        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
+        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped',
                        'startup_default', 'boot_upgrade', 'restore_video_catalog', 'classic_install', 'link_disk'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
@@ -526,7 +527,7 @@ class MediaWindow(
             self.device_name.setText('Connection needs checking')
             self.device_info.setText('Connection needs checking · choose Refresh or Choose iPod')
             self.update_controls()
-        if tag in ('setup', 'devices', 'scan'):
+        if tag in ('setup', 'uninstall_setup', 'devices', 'scan'):
             self.setup_progress.hide()
             self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
         self.show_error(error)
