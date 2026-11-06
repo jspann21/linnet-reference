@@ -97,6 +97,16 @@ def read_details(connection):
     session, _, current = connect(serial_number=connection['serial'], deadline_seconds=10)
     try:
         verify(current)
+
+        def reconnect_if_needed():
+            nonlocal session
+            if session.poisoned:
+                # Optional reads may be unsupported by older development
+                # firmware. Continue only on a fresh, verified connection.
+                session.close()
+                session, _, observed = connect(serial_number=connection['serial'], deadline_seconds=10)
+                verify(observed)
+
         spec = TARGETS[current['target_id']]
         product = connection.get('product', {})
         family = product.get('product_name') or spec['name'].removeprefix('Linnet for ')
@@ -114,6 +124,7 @@ def read_details(connection):
                 media = session.media_info()
             except (OSError, RuntimeError, ValueError):
                 rows.append('Storage details unavailable')
+                reconnect_if_needed()
             else:
                 rows += [f"Drive  {media['model']}", f"Drive firmware  {media['firmware']}",
                          f"Drive serial  {media['serial'].strip()}",
@@ -125,6 +136,7 @@ def read_details(connection):
                 power = session.power_state()
             except (OSError, RuntimeError, ValueError):
                 rows.append('Battery details unavailable')
+                reconnect_if_needed()
             else:
                 if power['flags'] & 8:
                     rows.append(f"Battery  {power['battery_percent']}% ({power['battery_mv']} mV)")
@@ -136,13 +148,7 @@ def read_details(connection):
                     hardware = read_hardware(session, current)
                 except (OSError, RuntimeError, ValueError):
                     rows.append('Board and memory details unavailable')
-                    # Older development firmware may reject these optional
-                    # reads. Keep established telemetry and verify identity on
-                    # a fresh transport after a rejection poisons the session.
-                    if session.poisoned:
-                        session.close()
-                        session, _, observed = connect(serial_number=connection['serial'], deadline_seconds=10)
-                        verify(observed)
+                    reconnect_if_needed()
                 else:
                     rows += [f"Board revision  {hardware['board_revision']}",
                              f"Usable RAM  {hardware['usable_ram_bytes'] // (1024 * 1024)} MiB"]
