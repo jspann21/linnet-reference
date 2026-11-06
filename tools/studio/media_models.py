@@ -1,7 +1,7 @@
 """Library table models and artwork delegates."""
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QRectF, QSize, Qt, Slot
 from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QWidget
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QTableView, QWidget
 
 from tools.content.media_manager import format_size as size
 
@@ -77,6 +77,25 @@ class MediaModel(QAbstractTableModel):
         else:
             self.rows.sort(key=sort_key, reverse=order == Qt.DescendingOrder)
         self.layoutChanged.emit()
+
+
+class LibraryTable(QTableView):
+    """Keep track titles readable when secondary metadata cannot fit."""
+
+    def fit_columns(self):
+        model = self.model()
+        if model is None:
+            return
+        compact = self.viewport().width() < 700
+        for column, (key, _) in enumerate(model.columns):
+            hidden = compact and key in ('album', 'genre')
+            if self.isColumnHidden(column) != hidden:
+                self.setColumnHidden(column, hidden)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.fit_columns()
+
 
 class Artwork(QWidget):
     def __init__(self, row, covers, parent=None):

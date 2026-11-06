@@ -96,13 +96,19 @@ class LibraryWorkspace:
             rows = list(self._library_title_cache[self.page])
         all_rows = rows
         music = self.page == 'Music'
-        self.heading_label.setText(self.group['title'] if self.group else self.page)
+        self.heading_label.set_message(self.group['title'] if self.group else self.page)
         self.segments.setVisible(music and self.group is None)
         for name, item in self.view_buttons.items():
             item.setChecked(name == self.view)
         self.back_button.setVisible(self.group is not None)
         self.genre_filter.setVisible(music); self.artist_filter.setVisible(music)
+        self.filters_button.setVisible(music)
+        active_filters = sum(bool(combo.currentData()) for combo in (self.genre_filter, self.artist_filter))
+        self.filters_button.setText('Hide filters' if self.filters_button.isChecked() else
+                                    f'Filters ({active_filters})' if active_filters else 'Filters')
+        self.filters_panel.setVisible(music and self.filters_button.isChecked())
         self.sync_button.setVisible(self.page == 'Videos')
+        self.playlists_button.setVisible(music)
         self.folder_button.setVisible(self.page != 'Trash')
         self.add_button.setVisible(self.page != 'Trash')
         self.search.setPlaceholderText('Search songs, artists, albums…' if music else f'Search {self.page.lower()}…')
@@ -179,6 +185,7 @@ class LibraryWorkspace:
             for col in range(1, self.model.columnCount()):
                 self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Interactive)
                 self.table.setColumnWidth(col, 220 if col == 1 and music else 130 if col < 3 else 80)
+        self.table.fit_columns()
         grid = grouped or self.page in ('Photos', 'Videos')
         self.views.setCurrentWidget(self.grid if grid else self.table)
         if not rows:
@@ -189,15 +196,16 @@ class LibraryWorkspace:
         self.empty_action.setVisible(not self.busy and (not self.identity or bool(all_rows) or self.page != 'Trash' or trash_attention))
         count, total_bytes, albums = ((len(all_rows), sum(r['bytes'] for r in all_rows), 0)
                                       if self.page == 'Trash' else self._library_stats[self.page])
-        self.subtitle.setText(f'{count:,} songs  ·  {albums:,} albums  ·  {size(total_bytes)}' if music else
+        self.subtitle.set_message(f'{count:,} songs  ·  {albums:,} albums  ·  {size(total_bytes)}' if music else
                               'Restore removed files or delete them permanently to free space.' if self.page == 'Trash' else
                               f'{count:,} files on your iPod  ·  {size(total_bytes)}')
         if self.group:
             members = self.group['members']
-            self.subtitle.setText((self.group['subtitle'] + '  ·  ' if self.view == 'Albums' else '') + f'{len(members):,} songs  ·  {size(sum(r["bytes"] for r in members))}')
+            self.subtitle.set_message((self.group['subtitle'] + '  ·  ' if self.view == 'Albums' else '') + f'{len(members):,} songs  ·  {size(sum(r["bytes"] for r in members))}')
         unit = 'songs' if music else 'items'
-        self.result_count.setText(f'{matched_count:,} of {scope_count:,} {unit}' + (f' · {len(rows):,} {self.view.lower()}' if grouped else '') if filtered else
-                                  f'{len(rows):,} {self.view.lower() if grouped else unit}')
+        if filtered:
+            result_count = f'{matched_count:,} of {scope_count:,} {unit}' + (f' · {len(rows):,} {self.view.lower()}' if grouped else '')
+            self.subtitle.set_message(result_count, tooltip=result_count + '\n' + self.subtitle.message)
         self.clear_button.setVisible(filtered)
         self.hint.setText('Select videos to move them to Trash. Sync video folder reconciles files changed in Explorer.' if self.page == 'Videos' else
                           'Double-click to explore. Select one or more groups to manage their songs.' if grouped else
@@ -260,8 +268,9 @@ class LibraryWorkspace:
 
     def selection_changed(self, *_):
         rows = self.selected()
+        self.hint.setVisible(bool(self.model.rows) and not rows)
         self.selection_bar.setVisible(bool(rows) and self.device_connected)
-        self.selection_text.setText(f'{len(rows):,} selected  ·  {size(sum(r["bytes"] for r in rows))}')
+        self.selection_text.set_message(f'{len(rows):,} selected  ·  {size(sum(r["bytes"] for r in rows))}')
         self.restore_button.setVisible(self.page == 'Trash')
         self.restore_button.setEnabled(self.device_connected and not self.busy)
         retail_photos = bool(rows) and all(r.get('retail_photo') for r in rows)

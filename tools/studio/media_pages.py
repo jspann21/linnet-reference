@@ -19,18 +19,26 @@ from PySide6.QtWidgets import (
 from tools.content import games
 from tools.studio import screen_settings
 
-from .media_models import CardDelegate, MediaModel, TrackDelegate
-from .media_widgets import CheckBox, ComboBox, ControlRow, action_menu, box, button, icon, label
+from .media_models import CardDelegate, LibraryTable, MediaModel, TrackDelegate
+from .media_widgets import CheckBox, ComboBox, ControlRow, StatusLabel, action_menu, box, button, icon, label
 
 
 def build_library_page(window):
-    page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=16)
-    titles = box(spacing=5); window.heading_label = label('Music', 'title', True); window.subtitle = label('', 'subtitle', True)
-    titles.addWidget(window.heading_label); titles.addWidget(window.subtitle); outer.addLayout(titles)
-    top = box(horizontal=True)
-    window.playlists_button = button('Playlists', window.open_playlists, None, 'music'); top.addWidget(window.playlists_button)
+    page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=12)
+    heading = QWidget(); titles = box(heading, spacing=5)
+    window.heading_label = StatusLabel('Music'); window.heading_label.setObjectName('title')
+    window.subtitle = StatusLabel(''); window.subtitle.setObjectName('subtitle')
+    titles.addWidget(window.heading_label); titles.addWidget(window.subtitle)
+    tools = QWidget(); top = box(tools, horizontal=True, spacing=8)
+    window.library_options, library_actions = action_menu('Library actions', (
+        ('Playlists…', window.open_playlists),
+        ('Open iPod folder', window.open_media_folder),
+        ('Sync video folder', window.sync_videos),
+    ))
+    window.playlists_button, window.folder_button, window.sync_button = library_actions
+    top.addWidget(window.library_options)
     window.add_button = button('Add media', window.add_media, 'primary', 'plus'); top.addWidget(window.add_button)
-    outer.addLayout(top)
+    outer.addWidget(ControlRow(heading, tools, breakpoint=None))
     toolbar = box(horizontal=True)
     window.segments = QFrame(); window.segments.setObjectName('segments'); segments = box(window.segments, horizontal=True, margins=(4, 4, 4, 4), spacing=2)
     window.view_buttons = {}
@@ -38,33 +46,32 @@ def build_library_page(window):
         item = button(name, lambda _=False, n=name: window.change_view(n), 'segment'); item.setCheckable(True)
         window.view_buttons[name] = item; segments.addWidget(item)
     toolbar.addWidget(window.segments)
-    window.back_button = button('Back', window.back_to_groups, 'quiet', 'back'); toolbar.addWidget(window.back_button)
+    window.back_button = button('Back', window.back_to_groups, 'quiet', 'back'); toolbar.addWidget(window.back_button); toolbar.addStretch()
     outer.addLayout(toolbar)
     toolbar = box(horizontal=True)
-    window.search = QLineEdit(); window.search.setPlaceholderText('Search your collection'); window.search.setClearButtonEnabled(True); window.search.setMinimumWidth(220)
+    window.search = QLineEdit(); window.search.setPlaceholderText('Search your collection'); window.search.setClearButtonEnabled(True); window.search.setMinimumWidth(180)
     window.search.addAction(icon('search'), QLineEdit.LeadingPosition)
     window.search.setAccessibleName('Search collection')
     window.search.setToolTip('Search this collection (Ctrl+F). All search words must match.')
     window.search_timer = QTimer(window); window.search_timer.setSingleShot(True); window.search_timer.setInterval(160); window.search_timer.timeout.connect(window.render_library)
     window.search.textChanged.connect(lambda: window.search_timer.start()); toolbar.addWidget(window.search)
+    window.filters_button = button('Filters', window.render_library, 'quiet', 'settings')
+    window.filters_button.setCheckable(True)
+    window.filters_button.setAccessibleName('Show or hide music filters')
+    toolbar.addWidget(window.filters_button)
+    window.clear_button = button('Clear', window.clear_filters, 'quiet')
+    window.clear_button.setToolTip('Clear search and filters'); toolbar.addWidget(window.clear_button)
     outer.addLayout(toolbar)
-    filters = box(horizontal=True)
+    window.filters_panel = QWidget(); filters = box(window.filters_panel, horizontal=True)
     window.genre_filter = ComboBox(); window.genre_filter.addItem('All genres', ''); window.genre_filter.currentIndexChanged.connect(window.render_library)
     window.artist_filter = ComboBox(); window.artist_filter.addItem('All artists', ''); window.artist_filter.currentIndexChanged.connect(window.render_library)
     window.genre_filter.setAccessibleName('Filter by genre')
     window.artist_filter.setAccessibleName('Filter by artist')
     filters.addWidget(window.genre_filter, 1); filters.addWidget(window.artist_filter, 1)
-    window.clear_button = button('Clear filters', window.clear_filters, 'quiet'); filters.addWidget(window.clear_button)
-    outer.addLayout(filters)
-    library_actions = box(horizontal=True)
-    window.result_count = label('', 'muted'); library_actions.addWidget(window.result_count, 1)
-    window.sync_button = button('Sync video folder', window.sync_videos, None, 'refresh')
-    window.folder_button = button('Open iPod folder', window.open_media_folder, None, 'folder'); library_actions.addWidget(window.folder_button)
-    library_actions.addWidget(window.sync_button)
-    outer.addLayout(library_actions)
+    outer.addWidget(window.filters_panel)
     window.notice = label('', 'notice', True); window.notice.hide(); outer.addWidget(window.notice)
     window.model = MediaModel(window)
-    window.table = QTableView(); window.table.setModel(window.model); window.table.setShowGrid(False); window.table.setAlternatingRowColors(False)
+    window.table = LibraryTable(); window.table.setModel(window.model); window.table.setShowGrid(False); window.table.setAlternatingRowColors(False)
     window.table.setSelectionBehavior(QAbstractItemView.SelectRows); window.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
     window.table.setEditTriggers(QAbstractItemView.NoEditTriggers); window.table.setSortingEnabled(True)
     window.table.sortByColumn(0, Qt.AscendingOrder)
@@ -91,14 +98,23 @@ def build_library_page(window):
     window.grid.selectionModel().selectionChanged.connect(window.selection_changed)
     window.grid.activated.connect(window.open_group)
     window.table.activated.connect(window.inspect_selection)
-    window.selection_bar = QFrame(); window.selection_bar.setObjectName('selectionBar'); selection = box(window.selection_bar, horizontal=True, margins=(16, 9, 12, 9))
-    window.selection_text = label(); selection.addWidget(window.selection_text, 1)
-    selection.addWidget(button('Clear', window.clear_selection, 'quiet'))
-    window.info_button = button('Details', window.inspect_selection); selection.addWidget(window.info_button)
-    window.prepare_pcm_button = button('Prepare as PCM', window.queue_selected_pcm)
-    selection.addWidget(window.prepare_pcm_button)
-    window.restore_button = button('Restore', window.restore_selected, None, 'back'); selection.addWidget(window.restore_button)
-    window.remove_button = button('Move to Trash', window.remove_selected, 'danger', 'trash'); selection.addWidget(window.remove_button)
+    window.selection_bar = QFrame(); window.selection_bar.setObjectName('selectionBar')
+    selection = box(window.selection_bar, margins=(16, 9, 12, 9))
+    window.selection_text = StatusLabel(''); window.selection_text.setMinimumWidth(140)
+    selected_tools = QWidget(); selected_actions = box(selected_tools, horizontal=True, spacing=8)
+    window.selection_options, item_actions = action_menu('More', (
+        ('Details', window.inspect_selection),
+        ('Prepare as PCM', window.queue_selected_pcm),
+        (None, None),
+        ('Clear selection', window.clear_selection),
+    ))
+    window.info_button, window.prepare_pcm_button, window.clear_selection_action = item_actions
+    selected_actions.addWidget(window.selection_options)
+    window.restore_button = button('Restore', window.restore_selected, 'primary', 'back')
+    selected_actions.addWidget(window.restore_button)
+    window.remove_button = button('Move to Trash', window.remove_selected, 'danger', 'trash')
+    selected_actions.addWidget(window.remove_button)
+    selection.addWidget(ControlRow(window.selection_text, selected_tools, breakpoint=None))
     outer.addWidget(window.selection_bar); window.selection_bar.hide()
     window.hint = label('Double-click an item for details. Ctrl+click or Shift+click to select multiple files.', 'muted', True); outer.addWidget(window.hint)
     return page
