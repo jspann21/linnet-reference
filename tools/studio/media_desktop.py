@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from tools.content import host_cache, media_manager as media, media_trash
 from tools.content.media_manager import format_size as size
 from tools.studio import installer, screen_settings
-from tools.studio.media_identity import ICON_PATH, configure_taskbar
+from tools.studio.media_identity import ICON_PATH, activate_window, configure_taskbar
 
 from .media_artwork import Covers, paint_cover as paint_cover
 from .media_devices import DeviceWorkspace
@@ -641,4 +641,5 @@ def launch():
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setStyle('Fusion'); app.setFont(QFont(UI_FONT, 10))
     window = MediaWindow(); window.show()
+    activate_window(window)
     app.exec()

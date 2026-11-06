@@ -32,3 +32,9 @@ if __name__ == "__main__":
         elif sys.stderr is not None:
             print(str(error), file=sys.stderr)
         raise SystemExit(1)
+    except Exception as error:
+        if sys.platform == 'win32' and len(sys.argv) == 1 and sys.stderr is None:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, 'Linnet could not start.\n\n' + str(error), 'Linnet', 0x10)
+            raise SystemExit(1)
+        raise

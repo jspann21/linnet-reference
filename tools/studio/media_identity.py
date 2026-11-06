@@ -7,6 +7,19 @@ APP_USER_MODEL_ID = 'Linnet.MediaManager'
 ICON_PATH = ROOT / 'assets/linnet.ico'
 
 
+def activate_window(window):
+    """Request foreground once for the window the user has just launched."""
+    window.raise_()
+    window.activateWindow()
+    if os.name == 'nt':
+        import ctypes
+        from ctypes import wintypes
+        user = ctypes.WinDLL('user32')
+        user.SetForegroundWindow.argtypes = (wintypes.HWND,)
+        user.SetForegroundWindow.restype = wintypes.BOOL
+        user.SetForegroundWindow(int(window.winId()))
+
+
 def configure_taskbar():
     """Set the shortcut identity before Qt creates any windows."""
     if os.name == 'nt':
