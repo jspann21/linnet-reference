@@ -49,7 +49,7 @@ def _video_is_native(source, identity, *, ffprobe=None, cancelled=None, details=
                 details.update(inspected)
         else:
             from .ipvf_validate import inspect_file
-            inspect_file(source, expected_width=profile['video_width'],
+            inspect_file(source, cancelled=cancelled, expected_width=profile['video_width'],
                          expected_height=profile['video_height'],
                          max_record_sectors=profile['max_read_sectors'])
         return True
