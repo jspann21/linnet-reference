@@ -19,6 +19,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import uuid
 import zlib
 
@@ -1747,6 +1748,42 @@ def _remove_private_tree(path, root, identity):
     path.rmdir()
 
 
+def _verify_uninstall(identity, media_folders, progress, *, timeout=15):
+    """Wait for deletion to become visible without replaying any device writes."""
+    from tools.content.guard import guarded_path, guard_volume
+
+    root = Path(identity["root"]).resolve(strict=True)
+    private = root / ".LINNET"
+    deadline = time.monotonic() + timeout
+    waiting = False
+    while True:
+        # An unavailable or replaced volume must never count as deleted files.
+        guard_volume(identity)
+        try:
+            private_removed = guarded_path(private, root) is None
+            observed = {name: guarded_path(root / name, root) is not None for name in media_folders}
+        except OSError as error:
+            detail = "Could not read the iPod folders after cleanup: " + str(error)
+        else:
+            missing = [name for name, existed in media_folders.items() if existed and not observed[name]]
+            guard_volume(identity)
+            # Apple software may create a previously absent media folder.
+            # Preservation requires keeping existing folders, not their absence.
+            if private_removed and not missing:
+                return dict(private_removed=True, media_folders=observed)
+            detail = ("Linnet's .LINNET directory is still visible after cleanup."
+                      if not private_removed else
+                      "Could not verify preserved media folders: " + ", ".join(missing))
+        if time.monotonic() >= deadline:
+            raise RuntimeError(detail)
+        if not waiting:
+            # Windows can retain a directory marked for deletion until another
+            # process closes its handle. Retry only the guarded readback.
+            progress("Waiting for Windows to finish updating the iPod folders…")
+            waiting = True
+        time.sleep(min(.25, max(0, deadline - time.monotonic())))
+
+
 def _repair_uninstall_recovery(identity, pending):
     """Repopulate only missing recovery files after an interrupted cleanup."""
     from tools.content.guard import guarded_path, guard_volume
@@ -1884,18 +1921,16 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
             path = Path(base) / name
             guarded_path(path, root)
     if (reviewed["recovery"] or {}).get("strategy") == "native-nor" and reviewed["recovery"]["phase"] != "restored":
-        from tools.studio.classic_recovery import AppleStoragePending, restore as restore_classic
+        from tools.studio.classic_recovery import restore as restore_classic
         boot = restore_classic(reviewed["identity"], progress=progress, instruction=instruction)
-        try:
-            result = uninstall(boot["identity"], progress=progress, expected=previous,
-                               instruction=instruction)
-        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
-            # USB storage may disappear even after it passed reconnection checks.
-            # Cleanup is never replayed automatically after it may have written.
-            raise AppleStoragePending(error) from error
+        # Storage reconnection succeeded. A later cleanup failure needs its own
+        # diagnosis; it does not mean Apple USB storage needs another reboot.
+        result = uninstall(boot["identity"], progress=progress, expected=previous,
+                           instruction=instruction)
         result["reconnected_identity"] = boot["identity"]
         return result
-    media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}
+    media_folders = {name: guarded_path(root / name, root) is not None
+                     for name in ("Music", "Photos", "Videos", "Notes")}
     receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     host_directory = receipt_path.parent.resolve(strict=True)
@@ -1961,9 +1996,8 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
                     "Startup software was restored, but Linnet cleanup stopped. "
                     f"Reconnect this iPod and retry removal; recovery files are saved at {recovery_backup}."
                 ) from error
-        guard_volume(reviewed["identity"])
-        if private.exists() or any((root / name).exists() != existed for name, existed in media_folders.items()):
-            raise RuntimeError("Linnet removal or media-folder verification failed")
+            progress("Verifying removal and preserved media folders…")
+            receipt["verification"] = _verify_uninstall(reviewed["identity"], media_folders, progress)
         receipt.update(passed=True, phase="complete", media_preserved=True,
                        reconnected_identity=reviewed["identity"],
                        requires_safe_eject=True,

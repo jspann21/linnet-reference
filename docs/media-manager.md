@@ -215,11 +215,13 @@ verifies the complete NOR, and restarts into Apple software before removing
 Linnet files. Restoration, reconnection, and cleanup run in the same removal
 operation; keep USB connected through the restarts. Media Manager allows three
 minutes for a fresh, verified Apple disk mount and continues cleanup
-automatically. If Windows has not mounted it, a dialog guides reconnection and
-the Apple Disk Mode button step: turn Hold off, hold Menu + Select until the
+automatically. The normal USB disk connection while Apple iPod software is running
+is sufficient; the button sequence for recovery Disk Mode is only a fallback if
+the disk does not appear. If Windows has not mounted it, a dialog guides
+reconnection and that fallback: turn Hold off, hold Menu + Select until the
 Apple logo appears, then immediately hold Select + Play/Pause until Disk Mode
 appears. A verified restoration is not repeated when only file cleanup remains.
-If the wait expires, reconnect this same iPod in Apple Disk Mode, choose **Find
+If the wait expires, reconnect this same iPod's Apple USB disk, choose **Find
 iPod**, then **Remove Linnet OS** again to finish cleanup. User builds need a
 Developer build before this Link recovery sequence; the original NOR backup
 remains the source of restoration.
@@ -229,7 +231,10 @@ can reconnect for a retry. Removal holds exclusive access to this Classic
 through its restarts and verifies the recorded recovery monitor before flashing.
 If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
 again. Media Manager matches its host recovery copy to that iPod and resumes
-the removal.
+the removal. After deleting the system files, it briefly rechecks the folders
+while Windows finishes processing deletion. These checks do not repeat file
+deletion or flash restoration. Newly appearing media folders are kept, and
+cleanup errors report the failed check without asking for another Disk Mode restart.
 Keep the matching backup and receipt; restoration cannot be inferred from files
 merely remaining on the disk.
 An OS-only Link update does not replace Boot or add a newer startup chooser.

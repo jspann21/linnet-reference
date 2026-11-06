@@ -16,7 +16,9 @@ from tools.link import classic_nor as nor
 FORMAT = 'linnet-classic-nor-recovery-v1'
 FILES = ('ORIGINAL.BIN', 'ORIGINAL.BIN.json', 'INSTALLED.BIN', 'NOR.JSON')
 APPLE_DISK_INSTRUCTIONS = (
-    'Unplug and reconnect this same iPod. If its disk does not appear, turn Hold off, '
+    'The normal USB disk connection in Apple iPod software is sufficient. '
+    'If its disk is missing, unplug and reconnect this same iPod. '
+    'If it still does not appear, turn Hold off, '
     'hold Menu + Select until the Apple logo appears, then immediately hold '
     'Select + Play/Pause until Disk Mode appears. Keep USB connected.'
 )
@@ -319,7 +321,7 @@ def _enter_monitor(record, progress):
 
 
 def restore(identity, *, progress=lambda _message: None, instruction=lambda _event: None):
-    """Restore flash through Link; return the same filesystem in Apple Disk Mode."""
+    """Restore flash through Link; return the same filesystem on Apple USB storage."""
     from tools.content.publish import _exclusive
     serial = _serial(identity.get('linnet_usb_serial'))
     with _exclusive(dict(volume_unique_id='classic-setup:'+serial)):

@@ -40,7 +40,9 @@ If a Classic restore stops while the SRAM monitor is running, use
 only sectors from the verified installed or original snapshots; unknown or
 partially programmed sectors stop further writes. The original entry sector is
 written last, and a full NOR readback must match before restarting Apple.
-After reconnecting in Apple Disk Mode, **Remove Linnet OS** finishes cleanup.
+After reconnecting to Apple's USB disk, **Remove Linnet OS** finishes cleanup.
+Apple software's normal USB disk connection is sufficient; recovery Disk Mode
+is needed only if the disk does not appear.
 The original backup, installed snapshot, and receipts must remain available.
 
 These workflows are not interchangeable. Preserve the original firmware, plan,

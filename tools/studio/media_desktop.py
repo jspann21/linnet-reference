@@ -502,7 +502,7 @@ class MediaWindow(
             # not leave removal enabled against its old disk serial or volume.
             self.transition_device(None)
             self.device_name.setText('Apple restored · cleanup pending')
-            self.device_info.setText('Reconnect in Apple Disk Mode, then choose Find iPod')
+            self.device_info.setText('Connect the iPod’s Apple USB disk, then choose Find iPod')
         if tag == 'classic_install':
             # The disk may have changed mode while setup was running. Keep the
             # host transaction reachable without offering stale install choices.
@@ -560,7 +560,7 @@ class MediaWindow(
                 layout.addWidget(dialog.stop_button)
                 self.setup_instruction_dialog = dialog
             dialog = self.setup_instruction_dialog
-            dialog.heading.setText('Connect Apple Disk Mode' if event['action']=='apple-disk' else
+            dialog.heading.setText('Waiting for the iPod’s Apple USB disk' if event['action']=='apple-disk' else
                                    'Release Menu + Select now' if event['action']=='release' else
                                    'Hold Menu + Select')
             dialog.message.setText(event['message'])
