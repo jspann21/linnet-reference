@@ -483,9 +483,9 @@ class DeviceWorkspace:
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         apple_ready = ready and self.apple_info is not None and self.apple_info['supported']
         self.apple_choose.setEnabled(apple_ready)
-        self.apple_update.setText('Retry Apple library update' if apple_ready and
+        self.apple_update.setText('Retry update' if apple_ready and
                                   self.apple_info.get('can_update') and
-                                  self.apple_info['status'] == 'Needs attention' else 'Update Apple library')
+                                  self.apple_info['status'] == 'Needs attention' else 'Update library')
         self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)

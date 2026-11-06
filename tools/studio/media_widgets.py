@@ -3,20 +3,23 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPalette, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
     QListView,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
     QStyleOptionButton,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -106,9 +109,76 @@ def box(parent=None, horizontal=False, margins=(0, 0, 0, 0), spacing=12):
     layout.setSpacing(spacing)
     return layout
 
+def action_menu(title, entries, *, minimum_width=0):
+    """Group related actions while reflecting their availability in the chooser."""
+    chooser = button(title, lambda: None, 'actionChooser')
+    chooser.setMinimumWidth(minimum_width)
+    menu = QMenu(chooser)
+    menu.setObjectName('actionMenu')
+    actions = []
+    for text, callback in entries:
+        if text is None:
+            menu.addSeparator()
+            continue
+        action = menu.addAction(text)
+        action.triggered.connect(callback)
+        actions.append(action)
+    chooser.setMenu(menu)
+
+    def update_availability():
+        visible = [action for action in actions if action.isVisible()]
+        # Layouts will show new buttons after giving them a parent widget.
+        if chooser.parentWidget() is not None or not visible:
+            chooser.setVisible(bool(visible))
+        chooser.setEnabled(any(action.isEnabled() for action in visible))
+
+    for action in actions:
+        action.changed.connect(update_availability)
+    update_availability()
+    return chooser, actions
+
+class ControlRow(QWidget):
+    """Place related text beside its control, stacking on smaller windows."""
+
+    def __init__(self, text, control, *, breakpoint=620):
+        super().__init__()
+        self.text = text
+        self.control = control
+        self.breakpoint = breakpoint
+        self.row = box(self, spacing=16)
+        self.row.addWidget(text, 1)
+        self.row.addWidget(control, 0, Qt.AlignLeft)
+        self.stacked = True
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_direction()
+
+    def event(self, event):
+        handled = super().event(event)
+        if event.type() == QEvent.LayoutRequest:
+            self.update_direction()
+        return handled
+
+    def update_direction(self):
+        if self.breakpoint is None:
+            visible = [item for item in (self.text, self.control) if not item.isHidden()]
+            required = sum(max(item.minimumSizeHint().width(), item.minimumWidth()) for item in visible)
+            required += self.row.spacing() * max(0, len(visible) - 1)
+            margins = self.row.contentsMargins()
+            stacked = required > self.width() - margins.left() - margins.right()
+        else:
+            stacked = self.width() < self.breakpoint
+        if stacked != self.stacked:
+            self.row.setDirection(QBoxLayout.TopToBottom if stacked else QBoxLayout.LeftToRight)
+            self.row.setAlignment(self.control, Qt.AlignLeft if stacked else Qt.AlignRight | Qt.AlignVCenter)
+            self.stacked = stacked
+            self.updateGeometry()
+
 class StatusLabel(QLabel):
     def __init__(self, text):
         super().__init__()
+        self.setTextFormat(Qt.PlainText)
         self.setObjectName('muted'); self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.message = text

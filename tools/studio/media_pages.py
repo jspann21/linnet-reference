@@ -20,7 +20,7 @@ from tools.content import games
 from tools.studio import screen_settings
 
 from .media_models import CardDelegate, MediaModel, TrackDelegate
-from .media_widgets import CheckBox, ComboBox, box, button, icon, label
+from .media_widgets import CheckBox, ComboBox, ControlRow, action_menu, box, button, icon, label
 
 
 def build_library_page(window):
@@ -124,63 +124,83 @@ def build_preparation_page(window):
     window.prep_checks, window.prep_labels, window.prep_cards = {}, {}, {}
     descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Validate existing videos and prepare them for this iPod', 'Notes': 'Prepare text and Markdown for the reader'}
     for kind in ('Music', 'Photos', 'Videos', 'Notes'):
-        card = QFrame(); card.setObjectName('card'); row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
+        card = QFrame(); card.setObjectName('card')
+        card_layout = box(card, margins=(20, 18, 20, 18), spacing=12)
         window.prep_cards[kind] = card
-        check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); window.prep_checks[kind] = check; row.addWidget(check)
-        text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
-        state = label('Connect an iPod in Disk Mode to check this library.', 'muted', True); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
+        summary = QWidget(); row = box(summary, horizontal=True, spacing=15)
+        check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110)
+        window.prep_checks[kind] = check; row.addWidget(check)
+        text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle', True))
+        state = label('Connect an iPod in Disk Mode to check this library.', 'muted', True)
+        window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
         if kind == 'Videos':
-            window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
-            window.video_repair_button = button('Review catalog backups', window.review_video_catalog)
+            window.video_options, video_actions = action_menu('Video options', (
+                ('Choose videos…', window.choose_videos),
+                ('Review catalog backups…', window.review_video_catalog),
+            ))
+            window.choose_videos_button, window.video_repair_button = video_actions
+            card_layout.addWidget(ControlRow(summary, window.video_options))
+        else:
+            card_layout.addWidget(summary)
         layout.addWidget(card)
-    layout.addWidget(window.video_repair_button, 0, Qt.AlignLeft)
-    window.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
-    window.online_artwork.setChecked(window.settings.value('onlineArtwork', True, type=bool))
-    window.online_artwork.toggled.connect(lambda enabled: window.settings.setValue('onlineArtwork', enabled))
-    layout.addWidget(window.online_artwork)
-    layout.addSpacing(10); layout.addWidget(label('Up next', 'section'))
-    window.queue_model = MediaModel(window)
-    window.queue_table = QTableView(); window.queue_table.setModel(window.queue_model); window.queue_table.verticalHeader().hide(); window.queue_table.setShowGrid(False)
-    window.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows); window.queue_table.setSelectionMode(QAbstractItemView.ExtendedSelection); window.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-    window.queue_table.setMinimumHeight(125); window.queue_table.setMaximumHeight(200)
-    layout.addWidget(window.queue_table)
-    queue_actions = box(horizontal=True)
-    window.queue_add = button('Add files or folder', window.add_media, None, 'plus'); queue_actions.addWidget(window.queue_add)
-    window.queue_incompatible = button('Queue incompatible iPod music', window.queue_existing_audio)
-    queue_actions.addWidget(window.queue_incompatible)
-    window.queue_open = button('Show source', window.open_queued, None, 'folder'); queue_actions.addWidget(window.queue_open)
-    window.queue_remove = button('Remove from queue', window.remove_queued, 'quiet'); queue_actions.addWidget(window.queue_remove); queue_actions.addStretch()
+
+    queue_card = QFrame(); queue_card.setObjectName('card')
+    queue = box(queue_card, margins=(20, 18, 20, 18), spacing=12)
+    queue_tools = QWidget(); queue_actions = box(queue_tools, horizontal=True, spacing=8)
+    window.queue_add = button('Add media…', window.add_media, None, 'plus'); queue_actions.addWidget(window.queue_add)
+    window.queue_options, queue_items = action_menu('Queue actions', (
+        ('Add incompatible iPod music', window.queue_existing_audio),
+        ('Show selected source', window.open_queued),
+        ('Remove selected from queue', window.remove_queued),
+    ))
+    window.queue_incompatible, window.queue_open, window.queue_remove = queue_items
     window.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay in place.')
+    queue_actions.addWidget(window.queue_options)
+    queue.addWidget(ControlRow(label('Up next', 'cardTitle'), queue_tools))
+    window.queue_model = MediaModel(window)
+    window.queue_table = QTableView(); window.queue_table.setModel(window.queue_model)
+    window.queue_table.verticalHeader().hide(); window.queue_table.setShowGrid(False)
+    window.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    window.queue_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    window.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    window.queue_table.setMinimumHeight(125); window.queue_table.setMaximumHeight(200)
+    queue.addWidget(window.queue_table)
     window.queue_table.selectionModel().selectionChanged.connect(window.update_queue_controls)
     window.queue_table.activated.connect(window.open_queued)
     shortcut = QShortcut(QKeySequence('Delete'), window.queue_table, activated=window.remove_queued)
     shortcut.setContext(Qt.WidgetWithChildrenShortcut)
-    layout.addLayout(queue_actions)
-    window.prep_results = QTextEdit(); window.prep_results.setReadOnly(True); window.prep_results.setMinimumHeight(130); window.prep_results.hide(); layout.addWidget(window.prep_results)
-    window.prep_details = button('View preparation details', window.show_preparation_details, 'quiet')
-    window.prep_details.hide(); layout.addWidget(window.prep_details, 0, Qt.AlignLeft)
-    window.retry_button = button('Review skipped files', window.review_skipped, 'quiet'); layout.addWidget(window.retry_button, 0, Qt.AlignLeft)
-    layout.addSpacing(12)
+    layout.addWidget(queue_card)
+    window.prep_results = QTextEdit(); window.prep_results.setReadOnly(True)
+    window.prep_results.setMinimumHeight(130); window.prep_results.hide(); layout.addWidget(window.prep_results)
+
     apple_card = QFrame(); apple_card.setObjectName('card')
     apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
     apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
     apple_layout.addWidget(label('Use media from your own iPod folders in Apple OS too. Choose folders outside the Apple-managed library, then update the Apple library whenever their files change.', 'muted', True))
     window.apple_status = label('Connect an iPod in Disk Mode to check Apple OS availability.', 'muted', True)
     apple_layout.addWidget(window.apple_status)
-    window.apple_eligibility = label('', 'muted', True)
-    apple_layout.addWidget(window.apple_eligibility)
-    apple_actions = box(horizontal=True)
+    window.apple_eligibility = label('', 'muted', True); apple_layout.addWidget(window.apple_eligibility)
+    apple_actions = box(horizontal=True, spacing=8)
     window.apple_choose = button('Choose folders…', window.choose_apple_folders, None, 'folder')
-    window.apple_update = button('Update Apple library', window.update_apple_os, None, 'refresh')
+    window.apple_update = button('Update library', window.update_apple_os, None, 'refresh')
     apple_actions.addWidget(window.apple_choose); apple_actions.addWidget(window.apple_update); apple_actions.addStretch()
     apple_layout.addLayout(apple_actions); layout.addWidget(apple_card)
     layout.addStretch()
-    footer = QFrame(); footer.setObjectName('preparationFooter')
-    actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
+
+    footer = QFrame(); footer.setObjectName('editorFooter')
+    footer_layout = box(footer, margins=(34, 16, 34, 16))
     window.prep_summary = label('Unchanged media is reused. Choose which videos to convert.', 'muted', True)
-    actions.addWidget(window.prep_summary, 1)
+    controls = QWidget(); actions = box(controls, horizontal=True, spacing=8)
+    window.prep_options, detail_actions = action_menu('More', (
+        ('Review skipped files…', window.review_skipped),
+        ('View preparation details', window.show_preparation_details),
+    ))
+    window.retry_button, window.prep_details = detail_actions
+    window.prep_details.setVisible(False)
+    actions.addWidget(window.prep_options)
     window.prepare_button = button('Prepare selected media', window.prepare, 'primary', 'prepare')
     actions.addWidget(window.prepare_button)
+    footer_layout.addWidget(ControlRow(window.prep_summary, controls))
     outer.addWidget(footer)
     return page
 
