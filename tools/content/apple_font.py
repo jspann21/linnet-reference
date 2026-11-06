@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import struct
 import tempfile
-import urllib.request
 import uuid
 import zipfile
 import zlib
@@ -149,6 +148,7 @@ def download(progress=lambda _message: None, cancelled=lambda: False):
     _checkpoint(cancelled)
     data = archive.read_bytes() if archive.is_file() and archive.stat().st_size == ARCHIVE_BYTES else b''
     if hashlib.sha256(data).hexdigest() != ARCHIVE_SHA256:
+        import urllib.request
         progress('Downloading Apple iPod Photo firmware (3.8 MB)…')
         chunks, total = [], 0
         with urllib.request.urlopen(URL, timeout=20) as response:
