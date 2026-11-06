@@ -468,6 +468,8 @@ class DeviceWorkspace:
         supported = media.supported_kinds(self.identity) if ready else ()
         self.screens.setEnabled(not self.busy)
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
+        self.screen_reload.setEnabled(ready)
+        self.screen_reset.setEnabled(not self.busy)
         self.screen_items.setEnabled(not self.busy)
         self.screen_picker.setEnabled(not self.busy)
         for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
