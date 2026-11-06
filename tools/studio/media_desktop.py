@@ -1,5 +1,4 @@
 """Linnet's native media library and device workspace."""
-import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -131,8 +130,8 @@ class MediaWindow(
         self.events.tools_checked.connect(self.tools_checked)
         self.events.setup_instruction.connect(self.show_setup_instruction)
         self.covers = Covers(self)
-        self.ffmpeg = self.settings.value('ffmpeg', shutil.which('ffmpeg') or '')
-        self.ffprobe = self.settings.value('ffprobe', shutil.which('ffprobe') or '')
+        self.ffmpeg = self.settings.value('ffmpeg', '')
+        self.ffprobe = self.settings.value('ffprobe', '')
         self.screens_controller = ScreensController(self)
         self.games_controller = GamesController(self)
         self.build()
@@ -595,8 +594,11 @@ class MediaWindow(
                     self.update_tools()
                     return
         else:
-            self.verified_ffmpeg = validated.get('FFmpeg')
-            self.verified_ffprobe = validated.get('FFprobe')
+            for name, setting in (('FFmpeg', 'ffmpeg'), ('FFprobe', 'ffprobe')):
+                value = validated.get(name)
+                setattr(self, 'verified_' + setting, value)
+                if value:
+                    setattr(self, setting, value)
         if result['errors']:
             self.record_diagnostic('tools', 'ToolCheckError', '; '.join(result['errors']), 'failed')
             available = (('FFprobe is ready. ' if self.verified_ffprobe else '') +

@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import tomllib
 from datetime import datetime
@@ -104,10 +105,12 @@ class SettingsWorkspace:
             errors = []
             validated = {}
             for name, value in zip(('FFmpeg', 'FFprobe'), paths):
-                if not value:
-                    errors.append(f'{name} is not configured.')
-                    continue
                 try:
+                    if not value and candidate is None:
+                        value = shutil.which(name.lower())
+                    if not value:
+                        errors.append(f'{name} is not configured.')
+                        continue
                     path = Path(value).resolve(strict=True)
                     if not path.is_file() or path.stem.casefold() != name.casefold():
                         raise OSError(f'expected {name.lower()}.exe')
