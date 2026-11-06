@@ -937,9 +937,14 @@ def _remove(identity, items):
                     saved_music = saved_state['Music']
                     fingerprint = scan_sources(root, ('Music',), skipped=skipped)['Music']['fingerprint']
                     saved_music['signature'] = saved_music['signature'].rsplit(':', 1)[0] + ':' + fingerprint
-                    saved_music['outputs'] = [(name, hashlib.sha256(music_after).hexdigest()
-                        if name.casefold() == '.linnet/library.pdb' else cover_digest
-                        if name.casefold() == '.linnet/covers.cfl' and cover_digest else digest) for name, digest in saved_music['outputs']]
+                    updated_digests = {
+                        '.linnet/library.pdb': hashlib.sha256(music_after).hexdigest(),
+                        '.linnet/browse.bin': hashlib.sha256(browse_data).hexdigest(),
+                    }
+                    if cover_digest:
+                        updated_digests['.linnet/covers.cfl'] = cover_digest
+                    saved_music['outputs'] = [(name, updated_digests.get(name.casefold(), digest))
+                                              for name, digest in saved_music['outputs']]
                     save_json(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.
