@@ -12,6 +12,9 @@ from tools.studio.build import toolchain
 from tools.studio.targets import TARGET_NUMBERS, presentation_defines, target_spec
 from tools.studio.menu_definition import write_firmware_header
 
+def _c_string(value):
+    return json.dumps(value).replace('?', r'\?')
+
 def png(raw,width,height):
     rows=[]
     for y in range(height):
@@ -72,7 +75,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
             preview=build_preview(manifest,scenes['target'],output/'game-build'/str(index))
             name=f'game-{index}'+Path(preview['path']).suffix
             shutil.copyfile(preview['path'],output/name)
-            entries.append('{'+','.join(json.dumps(preview[key]) for key in ('title','description'))+','+json.dumps(name)+f', {preview["schema"]}u, {preview["capabilities"]}u'+'}')
+            entries.append('{'+','.join(_c_string(preview[key]) for key in ('title','description'))+','+_c_string(name)+f', {preview["schema"]}u, {preview["capabilities"]}u'+'}')
         (output/'generated/game_previews.h').write_text(
             '#define LN_GAME_PREVIEWS 1\n#define GAME_PREVIEW_COUNT '+str(len(entries))+'u\n'
             'static const struct {const char *title,*description,*file;unsigned schema,capabilities;} game_previews[]={'+','.join(entries)+'};\n',encoding='utf-8')
