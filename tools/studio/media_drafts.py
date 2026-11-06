@@ -10,6 +10,22 @@ from tools.content import games, media_manager as media
 from tools.studio import screen_settings
 
 
+def _stored_source(name, root):
+    path = Path(name)
+    return '@device/' + path.relative_to(root).as_posix() if path.is_relative_to(root) else name
+
+
+def _restored_source(kind, name, root):
+    if not name.startswith('@device/'):
+        return name
+    relative = Path(name[8:])
+    parts = tuple(part.casefold() for part in relative.parts)
+    if (kind != 'Music' or relative.is_absolute() or relative.drive or '..' in parts or
+            not parts or not (parts[0] == 'music' or parts[:2] == ('ipod_control', 'music'))):
+        return None
+    return str(root / relative)
+
+
 class DraftWorkspace:
     """Per-device preparation and editor drafts in host settings."""
 
@@ -95,11 +111,11 @@ class DraftWorkspace:
         draft = dict(version=3, target_id=self.identity['target_id'],
                      disk_serial=self.identity['disk_serial'],
                      volume_serial=self.identity['volume_serial'],
-                     pending=[[kind, '@device/' + Path(name).relative_to(root).as_posix()
-                               if Path(name).is_relative_to(root) else name]
+                     pending=[[kind, _stored_source(name, root)]
                               for kind, name in self.pending],
                      video_mode=self.video_mode, videos=videos,
-                     outcomes=[dict(row) for key, row in self.queue_outcomes.items()
+                     outcomes=[dict(row, source=_stored_source(row['source'], root))
+                               for key, row in self.queue_outcomes.items()
                                if key in self.pending_keys])
         self.settings.setValue(self.draft_key(self.identity), json.dumps(draft))
         self.settings.sync()
@@ -145,14 +161,9 @@ class DraftWorkspace:
                         not all(isinstance(value, str) for value in item) or
                         item[0] not in media.KINDS or not item[1]):
                     continue
-                kind, name = item
-                if name.startswith('@device/'):
-                    relative = Path(name[8:])
-                    if (kind != 'Music' or relative.is_absolute() or relative.drive or
-                            '..' in relative.parts or not relative.parts or
-                            relative.parts[0].casefold() != 'music'):
-                        continue
-                    name = str(Path(identity['root']) / relative)
+                kind, name = item[0], _restored_source(item[0], item[1], Path(identity['root']))
+                if name is None:
+                    continue
                 key = (kind, os.path.normcase(name))
                 if key not in self.pending_keys:
                     self.pending.append((kind, name))
@@ -171,9 +182,12 @@ class DraftWorkspace:
                                 ('kind', 'source', 'status', 'reason')) or
                         row['status'] not in ('skipped', 'unfinished')):
                     continue
-                key = (row['kind'], os.path.normcase(row['source']))
+                source = _restored_source(row['kind'], row['source'], Path(identity['root']))
+                if source is None:
+                    continue
+                key = (row['kind'], os.path.normcase(source))
                 if key in self.pending_keys:
-                    self.queue_outcomes[key] = row
+                    self.queue_outcomes[key] = dict(row, source=source)
             self.video_mode = draft['video_mode']
             self.validate_draft()
         except (TypeError, ValueError):
