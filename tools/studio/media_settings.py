@@ -77,9 +77,9 @@ class SettingsWorkspace:
         self.cache_size.setText(f'{size(result["bytes"])} reusable cache · {result["files"]:,} files')
         self.cache_location.setText(result['location'])
         self.cache_protected.setText(
-            f'Protected: {size(result["startup_bytes"])} startup backups · '
-            f'{size(result["retained_bytes"])} recovery, saved state and other retained files.\n'
-            'Clearing or moving the cache never removes these files.')
+            f'{size(result["startup_bytes"])} startup backups · '
+            f'{size(result["retained_bytes"])} recovery and saved files.\n'
+            'Kept when you clear or move the cache.')
         if result['errors']:
             self.cache_size.setText(self.cache_size.text() + '\nSome files could not be measured or changed; they were kept.')
         self.cache_size.setToolTip('\n'.join(result['errors'][:10]))

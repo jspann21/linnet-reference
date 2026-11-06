@@ -1,8 +1,8 @@
 """Construction of the Media Manager workspace pages."""
 import sys
 
-from PySide6.QtCore import QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.content import apple_font, games, host_cache
+from tools.content import games
 from tools.studio import screen_settings
 
 from .media_models import CardDelegate, MediaModel, TrackDelegate
@@ -358,59 +358,4 @@ def build_setup_page(window):
     removal.addLayout(row)
     window.uninstall_detail = label('', 'muted', True); removal.addWidget(window.uninstall_detail)
     layout.addStretch()
-    return page
-
-def build_settings_page(window):
-    page, layout = window.scroll_page()
-    window.heading(layout, 'Settings', 'Preparation quality and tools, in one place.')
-    layout.addWidget(label('Photo detail', 'section'))
-    window.photo_detail = ComboBox(); window.photo_detail.addItems(['Standard · 640 px', 'High detail · 2048 px']); window.photo_detail.setCurrentIndex(int(window.settings.value('photo_detail', 0)))
-    window.photo_detail.currentIndexChanged.connect(lambda value: window.settings.setValue('photo_detail', value)); layout.addWidget(window.photo_detail)
-    layout.addWidget(label('High detail uses more storage and takes longer to prepare.', 'muted'))
-    layout.addSpacing(20); layout.addWidget(label('iPod theme font', 'section'))
-    layout.addWidget(label('Use Apple Podium Sans in supported color themes. Downloads 3.8 MB directly from Apple and extracts the font on this computer. Apple software license terms apply.', 'muted', True))
-    window.apple_font_status = label('Connect a color iPod in Disk Mode to choose its font.', 'muted', True)
-    layout.addWidget(window.apple_font_status)
-    actions = box(horizontal=True, spacing=8)
-    window.apple_font_install = button('Download and use Apple font', window.install_apple_font)
-    window.apple_font_remove = button('Use included font', window.remove_apple_font)
-    actions.addWidget(window.apple_font_install); actions.addWidget(window.apple_font_remove); actions.addStretch()
-    layout.addLayout(actions)
-    layout.addWidget(button('Apple software license', lambda: QDesktopServices.openUrl(QUrl(apple_font.LICENSE_URL)), 'quiet'), 0, Qt.AlignLeft)
-    layout.addSpacing(20); layout.addWidget(label('Computer storage', 'section'))
-    window.cache_size = label('Open Settings to measure reusable cache files.', 'muted', True)
-    layout.addWidget(window.cache_size)
-    window.cache_location = label('', 'muted', True)
-    window.cache_location.setTextInteractionFlags(Qt.TextSelectableByMouse)
-    layout.addWidget(window.cache_location)
-    window.cache_open = button('Open cache folder', window.open_computer_folder, None, 'folder')
-    window.cache_refresh = button('Refresh size', window.refresh_cache)
-    window.cache_change = button('Change location…', window.change_cache_location)
-    window.cache_clear = button('Clear cache…', window.clear_computer_cache)
-    window.cache_buttons = (window.cache_open, window.cache_refresh, window.cache_change, window.cache_clear)
-    for pair in (window.cache_buttons[:2], window.cache_buttons[2:]):
-        actions = box(horizontal=True, spacing=8)
-        for item in pair:
-            actions.addWidget(item)
-        actions.addStretch(); layout.addLayout(actions)
-    window.cache_protected = label('Startup backups, recovery copies and saved selections are protected. Clearing the cache never removes them.', 'muted', True)
-    layout.addWidget(window.cache_protected)
-    actions = box(horizontal=True, spacing=8)
-    window.backups_open = button('Open startup backups', lambda: window.open_computer_folder(host_cache.storage_root() / 'Installer'))
-    window.recovery_open = button('Open recovery and saved state', lambda: window.open_computer_folder(host_cache.media_state_root()))
-    actions.addWidget(window.backups_open); actions.addWidget(window.recovery_open); actions.addStretch()
-    layout.addLayout(actions)
-    layout.addSpacing(20); layout.addWidget(label('Conversion tools', 'section'))
-    window.tools_label = label('', 'muted', True); layout.addWidget(window.tools_label)
-    layout.addWidget(button('Choose FFmpeg folder', window.locate_tools, None, 'folder'), 0, Qt.AlignLeft)
-    layout.addWidget(label('Install FFmpeg and FFprobe on your computer, then choose the folder containing both programs. Video conversions need both tools; ordinary media browsing does not.', 'muted', True))
-    layout.addWidget(button('Help and About', window.show_help, 'quiet'), 0, Qt.AlignLeft)
-    layout.addSpacing(20); layout.addWidget(label('Advanced preparation', 'section'))
-    window.convert_audio = CheckBox('Convert incompatible music to PCM WAV on the computer')
-    window.convert_audio.setChecked(str(window.settings.value('convert_audio', True)).lower() in ('true', '1'))
-    window.convert_audio.toggled.connect(lambda checked: window.settings.setValue('convert_audio', checked))
-    layout.addWidget(window.convert_audio)
-    window.verify_audio = CheckBox('Read entire audio files when verifying (slower)'); layout.addWidget(window.verify_audio)
-    window.rebuild = CheckBox('Rebuild content that is already prepared'); layout.addWidget(window.rebuild)
-    layout.addStretch(); window.update_tools()
     return page

@@ -63,6 +63,17 @@ QScrollArea { border: none; background: transparent; }
 QScrollArea#sidebarScroll { background: #101214; }
 QFrame#card { background: white; border: 1px solid #dfe7e9; border-radius: 13px; }
 QFrame#card QLabel, QFrame#card QCheckBox { background: transparent; }
+QLabel#settingsLabel { font-weight: 600; }
+QFrame#settingsDivider { background: #e9eef0; border: none; }
+QPushButton#settingsChooser { padding-right: 28px; }
+QMenu#settingsMenu { background: white; color: #202629; border: 1px solid #dce3e5; padding: 5px; }
+QMenu#settingsMenu::item { padding: 8px 12px; }
+QMenu#settingsMenu::item:selected { background: #ddf4f8; color: #193d46; }
+QMenu#settingsMenu::item:disabled { color: #96a2a6; }
+QMenu#settingsMenu::separator { height: 1px; background: #e9eef0; margin: 4px 8px; }
+QToolButton#settingsDisclosure { background: transparent; border: none; border-radius: 5px; padding: 4px 0; font-weight: 600; color: #41585f; }
+QToolButton#settingsDisclosure:hover { color: #167489; }
+QToolButton#settingsDisclosure:focus { outline: none; border: 2px solid #16859c; }
 QFrame#selectionBar { background: #e5f6f9; border: 1px solid #bce5ed; border-radius: 11px; }
 QFrame#details { background: white; border-left: 1px solid #dfe7e9; }
 QFrame#activity { background: white; border-top: 1px solid #dfe7e9; }

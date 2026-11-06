@@ -50,11 +50,11 @@ from .media_pages import (
     build_library_page,
     build_preparation_page,
     build_screens_page,
-    build_settings_page,
     build_setup_page,
 )
 from .media_preparation import PreparationWorkspace
 from .media_settings import SettingsWorkspace, linnet_version as linnet_version
+from .media_settings_page import build_settings_page
 from .media_setup import SetupWorkspace
 from .media_widgets import (
     CheckBox as CheckBox,
