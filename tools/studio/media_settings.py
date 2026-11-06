@@ -222,9 +222,9 @@ class SettingsWorkspace:
                     'Diagnostics in the footer shows recent errors and exports a privacy-filtered support file.',
                     'Close', cancel=False)
 
-    def show_error(self, message):
+    def show_error(self, message, *, alert=False):
         self.notice.setText(message); self.notice.show(); self.show_progress(message)
         if self.stack.currentWidget() != self.library:
             self.prep_results.setPlainText(message); self.prep_results.show()
-            if self.page != 'Preparation':
-                self.dialog('Needs attention', message, 'OK', cancel=False)
+        if alert or (self.stack.currentWidget() != self.library and self.page != 'Preparation'):
+            self.dialog('Needs attention', message, 'OK', cancel=False)

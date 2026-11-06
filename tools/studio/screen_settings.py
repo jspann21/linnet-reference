@@ -8,6 +8,7 @@ from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
 from tools.content.guard import guarded_path as _plain, guard_volume as _volume_guard
+from tools.content.guard import require_linnet
 from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
 
 HINTS = {**{label: 'Shown under Music > More, in the order chosen here.' for label in ('Album Artists', 'Years', 'Folders', 'Bookmarks', 'Recently Added', 'Recently Played', 'Most Played')}, 'Artists': 'Performers credited on individual tracks.', 'Album Artists': 'Music > More: main artist credited for each album; useful for compilations.', 'Composers': 'Writers of the music; useful for classical collections.'}
@@ -122,6 +123,7 @@ def save(identity, state, expected=None):
     encode(state)
     identity = media.refresh(identity)
     with _exclusive(identity):
+        require_linnet(identity)
         root = Path(identity['root'])
         snapshot = device_preferences.read(root)
         saved = snapshot['value']['menus']

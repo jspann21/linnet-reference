@@ -530,7 +530,7 @@ class MediaWindow(
         if tag in ('setup', 'uninstall_setup', 'devices', 'scan'):
             self.setup_progress.hide()
             self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
-        self.show_error(error)
+        self.show_error(error, alert=error_type == 'LinnetInstallationRequired')
         self.update_controls()
         if tag == 'save_playlists':
             self.edit_playlists(self.playlist_draft)

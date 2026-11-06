@@ -8,6 +8,7 @@ import time
 
 from . import media_manager as media
 from . import media_library
+from .guard import require_linnet
 from .host_state import cache_directory, cache_root, cache_data_directory, file_stamp, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
@@ -372,6 +373,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
 
     check()
     identity = media.refresh(identity)
+    require_linnet(identity)
     check()
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:

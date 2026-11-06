@@ -24,6 +24,7 @@ from .guard import (
     guarded_path as _plain,
     hash_file as _hash,
     inspect_target as inspect_target,
+    require_linnet,
 )
 from .host_state import (
     cache_data_directory,
@@ -241,6 +242,7 @@ def run(identity, selected, pending=(), **options):
         while True:
             # Verify the device after taking the mutex, including on a source-error retry.
             identity = refresh(identity)
+            require_linnet(identity)
             root = Path(identity["root"]).resolve(strict=True)
             allowed = video_source_extensions(identity)
             current_options = dict(options, excluded_sources=excluded_sources)
