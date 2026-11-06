@@ -12,6 +12,7 @@ the [porting guide](../targets/README.md).
 | iPod Video A1136 | `video5g-m25` | Hitachi HTC426030G5CE00, 30 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | iFlash, 125 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB | 64 MiB | 320 × 240 color |
+| iPod classic A1238 (MB029) | `classic6g-n25` | Samsung HS081HA, 80 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 (MB147) | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 (MB562) | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 (MC297, Late 2009 / 7th generation) | `classic6g-n25` | Toshiba MK1634GAL, 160 GB | 64 MiB | 320 × 240 color |
