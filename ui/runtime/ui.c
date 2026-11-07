@@ -627,6 +627,36 @@ static void gradient(struct painter*p,struct rect r,uint16_t top,uint16_t bottom
     if(r.h<=0)return;uint32_t denominator=(uint32_t)max(1,r.h-1),step=divide(255u,denominator),remainder=255u-step*denominator,alpha=0,error=0;
     for(int32_t y=0;y<r.h;++y){fill(p,(struct rect){r.x,r.y+y,r.w,1},mix(bottom,top,alpha));alpha+=step;error+=remainder;if(error>=denominator){error-=denominator;++alpha;}}
 }
+/* The Classic's tall, empty pane exposes RGB565's few gray levels. Dither
+ * between neutral grays instead of rounding each color channel into bands.
+ * Screen coordinates keep the pattern stable across partial repaints. */
+static void classic_pane_gradient(struct painter*p,struct rect r){
+    static const uint8_t thresholds[8][8]={
+        {0,32,8,40,2,34,10,42},{48,16,56,24,50,18,58,26},
+        {12,44,4,36,14,46,6,38},{60,28,52,20,62,30,54,22},
+        {3,35,11,43,1,33,9,41},{51,19,59,27,49,17,57,25},
+        {15,47,7,39,13,45,5,37},{63,31,55,23,61,29,53,21}
+    };
+    struct rect v=intersect(intersect(r,p->clip),screen);
+    if(v.w<=0||v.h<=0)return;
+    uint32_t denominator=(uint32_t)max(1,r.h-1),range=6u*64u;
+    uint32_t step=divide(range,denominator),remainder=range-step*denominator;
+    uint32_t shade=30u*64u,error=0;
+    for(int32_t y=r.y;y<v.y+v.h;++y){
+        if(y>=v.y){
+            uint32_t level=shade>>6,fraction=shade&63u;
+            uint16_t low=(uint16_t)((level<<11)|(((level<<1)|(level>>4))<<5)|level);
+            uint32_t next=level+(fraction!=0u);
+            uint16_t high=(uint16_t)((next<<11)|(((next<<1)|(next>>4))<<5)|next);
+            uint16_t row[8];
+            for(uint32_t x=0;x<8u;++x)row[x]=fraction>thresholds[(uint32_t)y&7u][x]?high:low;
+            uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)v.x;
+            for(int32_t x=v.x;x<v.x+v.w;++x)*dest++=row[(uint32_t)x&7u];
+        }
+        shade-=step;error+=remainder;
+        if(error>=denominator){error-=denominator;--shade;}
+    }
+}
 static uint32_t fraction(uint32_t value,uint32_t scale,uint32_t denominator){
     if(!denominator)return 0;uint32_t result=0,remainder=0;
     for(uint32_t i=0;i<scale;++i){if(remainder>=denominator-value){remainder-=denominator-value;++result;}else remainder+=value;}return result;
@@ -897,7 +927,7 @@ static void classic_preview(struct painter*p,struct ln_ui_state*s){
         if(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)fill(p,pane,color(LN_UI_BACKGROUND));
         else gradient(p,pane,color(LN_UI_BACKGROUND),color(LN_UI_ARTWORK_BG));
         split_section(p,pane,classic_target(c,s));
-    }else gradient(p,pane,0xf7deu,0xc618u);
+    }else classic_pane_gradient(p,pane);
     p->clip=clip;fill(p,(struct rect){pane.x,pane.y,1,pane.h},color(LN_UI_BORDER));
 }
 static void chrome(struct painter*p,struct ln_ui_state*s){
