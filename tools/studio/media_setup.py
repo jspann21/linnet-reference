@@ -113,6 +113,11 @@ class SetupWorkspace:
         support = describe(support_identity, self.review)
         self.support_status.setText(self.hardware_report['summary'] if not support_identity and self.hardware_report else
                                    support['title'] + ' — ' + support['detail'])
+        report = self.hardware_report or {}
+        hardware_context = bool((self.identity and self.device_connected) or self.link_connection or
+                                self.discovery_errors or any(report.get(key) for key in
+                                ('usb', 'disks', 'recognized', 'runtime', 'errors', 'discovery_issue_count')))
+        self.hardware_report_button.setVisible(hardware_context)
         self.hardware_report_button.setEnabled(not self.busy)
         self.setup_progress.setVisible(loading)
         setting_up = bool(self.busy and self.active_operation and self.active_operation.tag=='classic_install')
