@@ -327,11 +327,26 @@ def build_setup_page(window):
     window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
     window.link_disk_button = button('Open Disk Mode', window.open_link_disk)
     window.link_disk_button.hide(); details.addWidget(window.link_disk_button, 0, Qt.AlignLeft)
-    window.connection_help = label('If your iPod does not appear, enter Apple Disk Mode:\n'
-        '1. Turn the Hold switch off.\n'
-        '2. Hold Menu + Select (the center button) until the iPod restarts.\n'
-        '3. Immediately hold Select + Play/Pause until Disk Mode appears.\n'
-        'Keep USB connected, then choose Find iPod.', 'muted', True)
+    window.connection_help = QWidget(); window.connection_help.setMaximumWidth(700)
+    instructions = box(window.connection_help, spacing=16)
+    instructions.addWidget(label('Enter Apple Disk Mode', 'cardTitle', True))
+    instructions.addWidget(label('If your iPod does not appear, follow these steps:', 'muted', True))
+    steps = (
+        ('Unlock the controls', 'Turn the <b>Hold</b> switch off.'),
+        ('Restart the iPod', 'Hold <b>Menu + Select</b> (the center button) until the iPod restarts.'),
+        ('Enter Disk Mode', '<b>Immediately</b> hold <b>Select + Play/Pause</b> until Disk Mode appears.'),
+    )
+    for number, (title, instruction) in enumerate(steps, 1):
+        row = box(horizontal=True, spacing=12)
+        marker = label(str(number), 'setupStepNumber'); marker.setFixedSize(24, 24)
+        marker.setAlignment(Qt.AlignCenter); row.addWidget(marker, 0, Qt.AlignTop)
+        text = box(spacing=5)
+        text.addWidget(label(title, 'setupStepTitle', True))
+        description = label(instruction, 'muted', True); description.setTextFormat(Qt.RichText)
+        text.addWidget(description); row.addLayout(text, 1)
+        instructions.addLayout(row)
+    instructions.addWidget(label('Keep USB connected, then choose Find iPod below.', 'muted', True))
+    details.addSpacing(8)
     details.addWidget(window.connection_help)
     window.setup_find_button = button('Find iPod', window.discover, 'primary', 'refresh')
     details.addWidget(window.setup_find_button, 0, Qt.AlignLeft)

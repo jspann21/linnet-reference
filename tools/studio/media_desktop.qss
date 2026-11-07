@@ -64,6 +64,8 @@ QScrollArea#sidebarScroll { background: #101214; }
 QFrame#card { background: white; border: 1px solid #dfe7e9; border-radius: 13px; }
 QFrame#card QLabel, QFrame#card QCheckBox { background: transparent; }
 QLabel#settingsLabel { font-weight: 600; }
+QLabel#setupStepTitle { font-weight: 600; }
+QFrame#card QLabel#setupStepNumber { background: #e8f7fa; color: #245866; border: 1px solid #bde7ef; border-radius: 12px; font-weight: 600; }
 QFrame#settingsDivider { background: #e9eef0; border: none; }
 QPushButton#actionChooser { padding-right: 28px; }
 QMenu#actionMenu { background: white; color: #202629; border: 1px solid #dce3e5; padding: 5px; }
