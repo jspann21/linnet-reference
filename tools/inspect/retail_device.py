@@ -50,6 +50,11 @@ volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | Convert
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                                 text=True, encoding="utf-8", capture_output=True, timeout=15, check=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Windows did not finish inspecting the mounted iPod. "
+            "Wait a few seconds, then choose Find iPod to try again."
+        ) from error
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
         raise RuntimeError("Could not inspect the mounted iPod: " + detail) from error

@@ -17,8 +17,11 @@ audio and video conversion.
 Setup checks the device before writing. See [tested models](hardware.md) and
 [storage requirements](storage.md); Classic CE-ATA drives are not supported.
 
-If detection fails, enter Disk Mode, try a direct USB port, and follow the
-message shown. Save a hardware report if you still need help.
+If Windows has not finished checking the iPod, wait a few seconds and choose
+**Find iPod** again. If detection still fails, enter Disk Mode, try a direct USB
+port, and follow the message shown. Save a hardware report if you still need help.
+When a report recognizes a mounted iPod after discovery failed, closing the report
+retries normal discovery and refreshes setup status.
 
 ### Send a hardware report
 

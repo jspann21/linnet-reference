@@ -400,7 +400,9 @@ def collect(discovery=None, identity=None):
         )
     elif any(item["targets"] for item in report["usb"]):
         report["summary"] = (
-            "iPod detected; disk unavailable. Check Disk Mode, its drive letter and FAT32 filesystem."
+            "iPod detected, but its storage identity could not be verified. "
+            "Choose Find iPod to try again. If it still fails, check Disk Mode, "
+            "its drive letter and FAT32 filesystem."
         )
     elif any(item["mode"] == "linnet-link" for item in report["usb"]):
         report["summary"] = (

@@ -419,9 +419,17 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
     # readable explanation when storage was removed outside Media Manager.
     script = "try {\n" + script + "\n} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                            capture_output=True, text=True, timeout=30,
-                            creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                                capture_output=True, text=True, timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired as error:
+        # TimeoutExpired includes the full encoded script in its message.
+        # Keep the command out of setup errors and bounded diagnostics.
+        raise RuntimeError(
+            "Windows did not finish checking the iPod's disk and volume identity. "
+            "Wait a few seconds, then choose Find iPod to try again."
+        ) from error
     if result.returncode:
         raise RuntimeError("iPod identity inspection failed: " + result.stderr.strip())
     identity = json.loads(result.stdout.lstrip("\ufeff"))

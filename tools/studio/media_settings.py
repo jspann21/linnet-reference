@@ -172,6 +172,7 @@ class SettingsWorkspace:
         from tools.studio.device_support import sharing, contact_link
         contact=sharing()
         self.hardware_report = report
+        self.update_setup_status()
         dialog = QDialog(self); dialog.setWindowTitle('Hardware support report'); dialog.resize(700, 500)
         layout = box(dialog, margins=(20,20,20,20))
         layout.addWidget(label(report['summary'], 'section', True))
@@ -192,6 +193,11 @@ class SettingsWorkspace:
             actions.addWidget(button('Contact Linnet support',lambda: QDesktopServices.openUrl(QUrl(contact_link()))))
         actions.addStretch();actions.addWidget(button('Close',dialog.reject));layout.addLayout(actions)
         dialog.exec()
+        if report.get('recognized') and not self.identity and not self.link_connection and not self.busy:
+            # A report can recognize a disk after an earlier discovery failed.
+            # Re-run normal discovery rather than treating report data as an
+            # installation identity or leaving the old failure on screen.
+            self.discover()
 
     def show_diagnostics(self):
         try:
