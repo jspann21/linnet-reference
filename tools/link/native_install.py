@@ -54,6 +54,9 @@ def install(root,package_path,expected_sha,port,progress=None):
                 status['profile']=='release' or status['image_kind']!='os'):
             raise RuntimeError('native install requires the authorized development RAM OS')
         receipt['before']=dict(identity=status,endpoint=endpoint);_save(path,receipt)
+        if session.native_status().get('supported') is False:
+            raise RuntimeError('This command requires the source Photo --native-maintenance build. '
+                               'Use Media Manager for ordinary firmware installation and Boot updates.')
         result=session.native_install(status['generation'],package,record)
         receipt.update(result)
     except (ValueError,RuntimeError,OSError) as exc:

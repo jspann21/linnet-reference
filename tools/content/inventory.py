@@ -34,7 +34,7 @@ def source_folders(root, kind):
     return [folder for folder in folders if folder.is_dir()]
 
 
-def file_records(folder, *, allowed=None, inodes=None, checkpoint=None):
+def file_records(folder, *, allowed=None, inodes=None, checkpoint=None, progress=None):
     if checkpoint:
         checkpoint()
     if not folder.exists():
@@ -45,6 +45,8 @@ def file_records(folder, *, allowed=None, inodes=None, checkpoint=None):
     found = []
     directories = [folder]
     while directories:
+        if progress:
+            progress(len(found))
         if checkpoint:
             checkpoint()
         with os.scandir(directories.pop()) as entries:
@@ -68,18 +70,24 @@ def file_records(folder, *, allowed=None, inodes=None, checkpoint=None):
                                 raise ValueError(f"Linked or changed file is unsupported: {path}")
                         inodes[path] = info.st_ino
                     found.append((path, info))
+                    if progress and len(found) % 128 == 0:
+                        progress(len(found))
     if checkpoint:
         checkpoint()
+    if progress:
+        progress(len(found))
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
 
-def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True, checkpoint=None):
+def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True, checkpoint=None, progress=None):
     if checkpoint:
         checkpoint()
     kinds = tuple(kinds)
     inode_folders = set(source_folders(root, 'Music')) if include_inodes and 'Music' in kinds else set()
     folders, result = {}, _RecordInventory()
     for kind in kinds:
+        if progress:
+            progress('Reading ' + kind.lower() + ' folders…')
         if checkpoint:
             checkpoint()
         if kind not in KINDS:
@@ -89,7 +97,8 @@ def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True, checkpoin
             if folder not in folders:
                 folders[folder] = file_records(
                     folder, inodes=result.inodes if folder in inode_folders else None,
-                    checkpoint=checkpoint)
+                    checkpoint=checkpoint, progress=(lambda count: progress(
+                        'Reading ' + kind.lower() + f' folders · {count:,} files found')) if progress else None)
             result[kind].extend(folders[folder])
     return result
 
@@ -123,14 +132,14 @@ def skipped_paths(state, kind):
 
 
 def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None,
-         fingerprint_kinds=None, retail_tracks=None, checkpoint=None):
+         fingerprint_kinds=None, retail_tracks=None, checkpoint=None, progress=None):
     if checkpoint:
         checkpoint()
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
         records_by_kind = collect_records_by_kind(
-            root, kinds, include_inodes=False, checkpoint=checkpoint)
+            root, kinds, include_inodes=False, checkpoint=checkpoint, progress=progress)
     skipped = skipped or {}
     fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
     inodes = getattr(records_by_kind, 'inodes', {})
@@ -159,7 +168,9 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             return info.st_size, info.st_mtime_ns, info.st_ctime_ns, inode
         music_folders, cover_rows = set(), []
         last_parent, relative_prefix = None, None
-        for path, info in records:
+        for index, (path, info) in enumerate(records):
+            if progress and index % 128 == 0:
+                progress('Checking ' + kind.lower() + f' for preparation · {index + 1:,} of {len(records):,} files')
             if checkpoint:
                 checkpoint()
             relative = None
@@ -202,7 +213,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                 # Artwork affects Music only when playable audio exists. Video
                 # readiness uses source/output stamps without artwork scans.
                 artwork_folder = root / 'iPod_Control' / 'Artwork'
-                for path, info in file_records(artwork_folder, checkpoint=checkpoint):
+                for path, info in file_records(artwork_folder, checkpoint=checkpoint,
+                        progress=(lambda count: progress(f'Reading album artwork · {count:,} files found')) if progress else None):
                     rows.append((path.relative_to(root).as_posix(), *source_stamp(path, info)))
                 from .album_art import signature as artwork_signature
                 from .retail_media import available_tracks

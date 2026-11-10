@@ -23,8 +23,8 @@ def register_primary(commands):
         entry = installer_actions.add_parser(action)
         entry.add_argument("--mount", type=Path, required=True)
         if action in ("install", "upgrade-boot"):
-            entry.add_argument("--build", choices=("user", "dev"), default="user",
-                               help="OS build to install (default: user)")
+            entry.add_argument("--build", choices=("user", "dev"),
+                               help="Source build type (default: user); ZIP build type is detected automatically")
             if action == "install":
                 entry.add_argument("--method", choices=("native-preserve", "native-selector", "rockbox-loader"),
                                    help="boot installation method (default: native for fresh installs, saved method for reinstall/resume)")
@@ -44,6 +44,8 @@ def register_primary(commands):
     compile_.add_argument("--link-optimization", choices=("none", "services-size", "services-thin-lto"), default="none",
                           help="optional M25 OS service link optimization (default: none)")
     compile_.add_argument("--system", type=Path, help="system.toml configuration")
+    compile_.add_argument('--native-maintenance', action='store_true',
+                          help='Build the source-only Photo fixed-layout Boot maintenance OS')
     ui=commands.add_parser("ui").add_subparsers(dest="action",required=True)
     ui_compile=ui.add_parser("compile")
     ui_compile.add_argument("--output",type=Path,default=Path('out/ui'))
@@ -70,6 +72,7 @@ def register_support(commands):
     bundle.add_argument("--target", required=True, type=target_id)
     bundle.add_argument("--output", required=True, type=Path)
     bundle.add_argument("--jobs", type=int, choices=range(1, 5), default=2)
+    bundle.add_argument('--build', choices=('user', 'dev'), default='user', help='Firmware build type (default: user)')
     media = releases.add_parser("media", help="Package the standalone Windows Media Manager")
     media.add_argument("--output", required=True, type=Path)
     media.add_argument("--installer-output", type=Path, help="Also build a Windows setup EXE")
@@ -130,7 +133,7 @@ def run_studio(args, emit):
         emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
                    args.device_serial, system_config=args.system,
                    boot_selector=args.boot_selector, jobs=args.jobs,
-                   link_optimization=args.link_optimization))
+                   link_optimization=args.link_optimization, native_maintenance=args.native_maintenance))
     elif args.command == "ui":
         from tools.content.compiler import compile_system
         emit(compile_system(ROOT,args.output,args.system))
@@ -148,7 +151,7 @@ def run_studio(args, emit):
     elif args.command == "release":
         if args.action == "bundle":
             from tools.studio.firmware_bundle import create
-            emit(create(args.target, args.output, args.jobs))
+            emit(create(args.target, args.output, args.jobs, build=args.build))
         elif args.action == "media":
             from tools.studio.media_distribution import create
             emit(create(args.output, args.installer_output))

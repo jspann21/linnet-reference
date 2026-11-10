@@ -11,10 +11,10 @@ after 14 days. Public release assets remain on the repository's Releases page.
 | --- | --- |
 | `LinnetSetup.exe` | Recommended Windows x64 installer: installs Media Manager, adds a Start menu shortcut, and provides an uninstall entry |
 | `linnet-media-windows.zip` | Optional portable Media Manager, including `Linnet Media.exe`, Python, Qt, media preparation helpers, and Apple database helpers |
-| `linnet-photo4g-p98.zip` | iPod Photo firmware |
-| `linnet-video5g-m25.zip` | iPod Video firmware |
-| `linnet-ipod4g-q21.zip` | Monochrome fourth-generation iPod firmware |
-| `linnet-classic6g-n25.zip` | iPod Classic firmware and initial Boot setup; follow Media Manager's connection and button prompts |
+| `linnet-photo4g-p98-user.zip` / `linnet-photo4g-p98-dev.zip` | iPod Photo firmware |
+| `linnet-video5g-m25-user.zip` / `linnet-video5g-m25-dev.zip` | iPod Video firmware |
+| `linnet-ipod4g-q21-user.zip` / `linnet-ipod4g-q21-dev.zip` | Monochrome fourth-generation iPod firmware |
+| `linnet-classic6g-n25-user.zip` / `linnet-classic6g-n25-dev.zip` | iPod Classic firmware and initial Boot setup; follow Media Manager's connection and button prompts |
 | `linnet-source.zip` | Repository source at the exact commit used for these builds, including build scripts and vendor notices |
 | `SHA256SUMS.txt` | SHA-256 checksums of the downloads and these instructions |
 
@@ -31,9 +31,16 @@ This removes the computer app; iPod firmware is managed separately inside Linnet
 For portable use, extract the entire optional ZIP, then open
 `Linnet Media/Linnet Media.exe`. Keep `_internal` beside the executable. Both
 packages include the same app and helpers. End users do not need Python, a
-compiler, or WSL. FFmpeg and FFprobe are installed separately and selected in
-Settings; see the Media Manager guide. The installer and app are currently
-unsigned.
+compiler, or WSL. FFmpeg and FFprobe are included and selected automatically;
+media conversion works without a separate installation or folder selection.
+The installer and app are currently unsigned.
+
+The included conversion tools use FFmpeg and x264 under GPLv3 or later. Their
+licenses, complete matching source archives, pinned dependency details and build
+script are included in `_internal/conversion-tools`. The executables remain
+separate and replaceable. See [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
+
+Choose `-user.zip` for everyday use or `-dev.zip` for diagnostics and Linnet Link. Media Manager reads the build type and iPod model from the ZIP and displays them automatically.
 
 Select the whole firmware ZIP for the detected target inside Media Manager
 **without extracting it**. Media Manager selects the required files for your
@@ -42,7 +49,7 @@ folder containing `linnet-os`, `linnet-boot-standard`, and `linnet-boot-multiboo
 images and reports. Both bootloaders are Linnet software; the multiboot variant
 can also start a compatible Rockbox installation already on the device. The
 package does not install Rockbox. Packaging runs image verification and the installer's bundle
-validation. Release OS/Boot images exclude the developer transport. The Classic
+validation. User OS/Boot images exclude developer tools. Developer ZIPs include diagnostics and Linnet Link; Media Manager binds their firmware to the connected iPod without compiling on the computer. The Classic
 ZIP additionally includes a precompiled bootstrap template; Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
 remaining Link, NOR and native Disk Mode installation steps. See
 [hardware support](hardware.md) for tested configurations and compatibility.
@@ -80,11 +87,12 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r tools/studio/requirements-build.txt
 .\.venv\Scripts\python.exe linnet setup
 .\.venv\Scripts\python.exe linnet doctor
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --output out/releases/linnet-photo4g-p98.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-p98-user.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-p98-dev.zip
 .\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```
 
-Repeat the bundle command for the other target IDs in the table. Installer
+Repeat both bundle commands for the other target IDs in the table. Installer
 packaging downloads and verifies the pinned Inno Setup compiler, then prepares
 it in portable mode under `out/toolchains/`. Its version and checksum are in
 [`config/inno-setup.json`](../config/inno-setup.json). The installed app version

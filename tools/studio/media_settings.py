@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -99,14 +100,20 @@ class SettingsWorkspace:
     def update_tools(self, *, candidate=None):
         self.tool_check_id += 1
         request = self.tool_check_id
-        paths = candidate or (self.ffmpeg, self.ffprobe)
-        self.tools_label.setText('Checking FFmpeg and FFprobe…')
+        included = getattr(sys, 'frozen', False)
+        if included:
+            from tools.studio.targets import ROOT
+            paths = tuple(str(ROOT / 'conversion-tools' / (name + '.exe')) for name in ('ffmpeg', 'ffprobe'))
+        else:
+            paths = candidate or (self.ffmpeg, self.ffprobe)
+        if self.tools_label is not None:
+            self.tools_label.setText('Checking FFmpeg and FFprobe…')
         def check():
             errors = []
             validated = {}
             for name, value in zip(('FFmpeg', 'FFprobe'), paths):
                 try:
-                    if not value and candidate is None:
+                    if not value and candidate is None and not included:
                         value = shutil.which(name.lower())
                     if not value:
                         errors.append(f'{name} is not configured.')
@@ -220,8 +227,11 @@ class SettingsWorkspace:
                     f'Linnet system version: {linnet_version()}\n\n'
                     'Linnet Media Manager helps prepare music, photos, videos, and notes for supported iPods.\n\n'
                     'Connect your iPod in Disk Mode, choose Refresh or Choose iPod, and use Preparation to review changes. '
-                    'Use Eject safely when finished.\n\n'
-                    'For video conversion, install FFmpeg and FFprobe on this computer, then choose their folder in Settings. '
+                    'Use Eject safely when finished.\n\n' +
+                    ('FFmpeg and FFprobe are included for audio and video conversion. '
+                     'Includes FFmpeg and x264 under GPLv3 or later; licenses and matching source accompany the app. '
+                     if getattr(sys, 'frozen', False) else
+                     'For audio and video conversion from source, choose your FFmpeg and FFprobe folder in Settings. ') +
                     'Diagnostics in the footer shows recent errors and exports a privacy-filtered support file.',
                     'Close', cancel=False)
 

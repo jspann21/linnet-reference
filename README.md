@@ -75,9 +75,8 @@ install firmware, choose games, and arrange the screens you want on your iPod.
 
 The packaged Windows app includes its Python runtime and dependencies. Installing
 prebuilt firmware needs **no compiler, no Python setup, and no WSL**. Media
-conversion uses FFmpeg and FFprobe. Extract a Windows build with both executables,
-then select their folder in Settings; the app checks that each can run. See the
-[setup and troubleshooting steps](docs/media-manager.md#set-up-ffmpeg-on-windows).
+conversion is included and needs no extra setup. See
+[audio and video preparation](docs/media-manager.md#audio-and-video-preparation).
 
 [Explore Media Manager →](docs/media-manager.md)
 
@@ -191,10 +190,10 @@ To add another model, start with the [porting guide](targets/README.md).
 
 When release packages are available:
 
-1. Download **LinnetSetup.exe** and the **firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
+1. Download **LinnetSetup.exe** and the **`-user.zip` or `-dev.zip` firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
 2. Run **LinnetSetup.exe**, install, and open **Linnet** from the Start menu. The optional portable ZIP can be extracted and run without installation.
 3. Connect the iPod with USB and select **Find or switch iPod**. If it does not appear, **iPod setup** shows how to enter Apple Disk Mode.
-4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager selects the required files. For a fresh Classic, follow its live button prompt; Link handles the remaining bootloader and OS setup automatically.
+4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager displays the ZIP's build type automatically and selects the required files. User ZIPs are for everyday use; Developer ZIPs include diagnostics and Linnet Link. For a fresh Classic, follow its live button prompt; Link handles the remaining bootloader and OS setup automatically.
 5. Prepare media while connected in Disk Mode, then **Eject safely** to start Linnet.
 
 The native installer preserves the existing media and Apple firmware and saves
@@ -215,8 +214,7 @@ can change the default without reinstalling Linnet.
 ### Add your library
 
 In Media Manager, select **Music**, **Photos**, **Videos**, or **Notes** and add your
-files or folders. For media conversion, first select your FFmpeg/FFprobe folder
-in **Settings**. Open **Preparation → Prepare selected media**, then **Eject safely** and restart.
+files or folders. Open **Preparation → Prepare selected media**, then **Eject safely** and restart.
 
 On the iPod, a short **Play/Pause** press toggles playback or a photo slideshow.
 Hold **Play/Pause alone for two seconds** to shut down; the Hold switch locks input.
@@ -314,7 +312,8 @@ the host headers and libraries supplied with LLVM-MinGW.
 <summary><strong>Package firmware and the Windows app</strong></summary>
 
 ```powershell
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --output out/releases/linnet-photo4g-p98.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-p98-user.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-p98-dev.zip
 .\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
 .\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```

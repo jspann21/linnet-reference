@@ -140,6 +140,14 @@ __attribute__((noinline)) static void reply_header(uint8_t *reply,uint32_t opera
     ln_write_le32(reply,0x4252504cu);ln_write_le32(reply+4,operation);
 }
 
+/* Share response fields and byte copies across the diagnostic commands. */
+__attribute__((noinline)) static void reply_status(uint8_t *reply,uint32_t operation,uint32_t value) {
+    reply_header(reply,operation);ln_write_le32(reply+8,value);
+}
+__attribute__((noinline)) static void reply_copy(uint8_t *destination,const uint8_t *source,unsigned length) {
+    for(unsigned i=0;i<length;i++)destination[i]=source[i];
+}
+
 /* This command belongs to the SRAM monitor, not the runtime storage API.
  * Only IDENTIFY and single-sector reads are exposed; no ATA write opcode. */
 int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,uint8_t *reply) {
@@ -156,7 +164,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
     if(pcm_active && operation!=35)return 1;
     if((operation==62 || operation==63 || operation==64) && !lba) {
         const volatile uint8_t *data=(const volatile uint8_t *)(uintptr_t)(operation==62?0x0bfff000u:operation==63?0x22017d00u:0x22017c00u);
-        reply_header(reply,operation);ln_write_le32(reply+8,1);
+        reply_status(reply,operation,1);
         for(unsigned i=0;i<256;i++)reply[12+i]=data[i];
         response->length=268;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -164,9 +172,9 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         bool ok=operation!=60 || ln_power_init();
         struct ln_power_state state;ok=ln_power_poll(ln_time_us(),&state)&&ok;
         struct ln_clock_state clock;ln_power_clock_snapshot(&clock);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         const uint8_t *data=(const uint8_t *)&state;
-        for(unsigned i=0;i<sizeof(state);i++)reply[12+i]=data[i];
+        reply_copy(reply+12,data,sizeof(state));
         unsigned at=12+sizeof(state);reply[at]=clock.hour;reply[at+1]=clock.minute;
         reply[at+2]=clock.second;reply[at+3]=clock.valid;
         uint8_t id[2]={0};(void)pmu_read(0,id,2);reply[at+4]=id[0];reply[at+5]=id[1];
@@ -176,28 +184,28 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         bool ok=operation!=58 || ln_core_init();
         if(operation==59)ln_core_idle_until(ln_time_us()+lba);
         struct ln_core_status state;ln_core_snapshot(&state);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         const uint8_t *data=(const uint8_t *)&state;
-        for(unsigned i=0;i<sizeof(state);i++)reply[12+i]=data[i];
+        reply_copy(reply+12,data,sizeof(state));
         response->length=12+sizeof(state);response->flags=LINNET_LINK_ACK;return 1;
     }
     if((operation==53 || operation==56 || operation==57 || operation==66 || operation==67) && lba==0x52454254u) {
         reset_requested=operation==53?1:operation==56?2:operation==57?3:operation==66?4:5;
-        reply_header(reply,operation);ln_write_le32(reply+8,1);
+        reply_status(reply,operation,1);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }
     if((operation==54 && lba>=10 && lba<=1000) || (operation==55 && !lba)) {
         bool ok=operation==55 || ln_s5l_watchdog_timer(lba);
         uint32_t state[4];ln_s5l_watchdog_snapshot(state);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         for(unsigned i=0;i<4;i++)ln_write_le32(reply+12+i*4,state[i]);
         response->length=28;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==51 && request->length==520 && lba<8 && ln_bootstrap_memory_ready()) {
         if(!lba)flash_parts=0;
-        for(unsigned i=0;i<512;i++)flash_sector[lba*512u+i]=request->payload[8+i];
+        reply_copy(flash_sector+lba*512u,request->payload+8,512);
         flash_parts|=1u<<lba;
-        reply_header(reply,operation);ln_write_le32(reply+8,flash_parts);
+        reply_status(reply,operation,flash_parts);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==52 && request->length==72 && !(lba&4095u) && lba>=0x8000u && lba<0x28000u &&
@@ -210,17 +218,17 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         if(!error)error=ln_n25_flash_replace_sector(lba,flash_sector);
         bool readback=flash_hash(lba,digest);
         if(!error && (!readback || !hash_equal(digest,request->payload+40)))error=12;
-        reply_header(reply,operation);ln_write_le32(reply+8,!error);
-        ln_write_le32(reply+12,error);for(unsigned i=0;i<32;i++)reply[16+i]=digest[i];
+        reply_status(reply,operation,!error);
+        ln_write_le32(reply+12,error);reply_copy(reply+16,digest,32);
         response->length=48;response->flags=LINNET_LINK_ACK;return 1;
     }
     if((operation==49 || operation==50) && (lba==1 || lba==2) && request->length>8) {
         static uint8_t block[512] __attribute__((aligned(32)));
         uint32_t bytes=request->length-8;
-        for(unsigned i=0;i<bytes;i++)block[i]=request->payload[8+i];
+        reply_copy(block,request->payload+8,bytes);
         bool ok=ln_s5l_aes_crypt(block,bytes,lba,operation==49);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
-        if(ok)for(unsigned i=0;i<bytes;i++)reply[12+i]=block[i];
+        reply_status(reply,operation,ok);
+        if(ok)reply_copy(reply+12,block,bytes);
         response->length=ok?12+bytes:12;response->flags=LINNET_LINK_ACK;return 1;
     }
     if((operation==44 || (operation>=45 && operation<=48 && !lba)) && ln_bootstrap_memory_ready()) {
@@ -273,14 +281,14 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
             }
         }
         ln_s5l_irq_restore(flags);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,ln_arm926_cache_control());ln_write_le32(reply+16,failed);
         ln_write_le32(reply+20,(uint32_t)(uintptr_t)page_table);
         response->length=24;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==38 && !lba) {
         uint32_t values[64];ln_s5l_usb_trace(values);
-        reply_header(reply,operation);ln_write_le32(reply+8,1);
+        reply_status(reply,operation,1);
         for(unsigned i=0;i<64;i++)ln_write_le32(reply+12+i*4,values[i]);
         response->length=268;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -296,7 +304,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         (void)ln_s5l_irq_save();uint32_t elapsed=ln_time_us()-started;
         ln_s5l_deadline_stop();ln_s5l_irq_enable(7,false);ln_s5l_irq_restore(flags);
         ok=ok && timer_irqs==1 && !unexpected_irqs;
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,timer_irqs);ln_write_le32(reply+16,unexpected_irqs);
         ln_write_le32(reply+20,elapsed);response->length=24;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -313,7 +321,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
             ok=software_irqs==1 && !unexpected_irqs;
         }
         ln_s5l_irq_restore(flags);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,software_irqs);ln_write_le32(reply+16,unexpected_irqs);
         ln_write_le32(reply+20,ln_time_us()-started);response->length=24;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -332,25 +340,25 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
                 ln_s5l_irq_restore(pcm_saved_flags&~0x80u);
             }
         }
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,pcm_active);ln_write_le32(reply+16,pcm_complete);
         ln_write_le32(reply+20,pcm_error);ln_write_le32(reply+24,pcm_elapsed);
         ln_write_le32(reply+28,dma_irqs);response->length=32;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==32 && !lba) {
         uint8_t id[3]={0};bool ok=ln_n25_flash_identity(id);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         for(unsigned i=0;i<3;i++)reply[12+i]=id[i];
         response->length=15;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==33 && !(lba&511) && lba<0x1000000u) {
         bool ok=ln_n25_flash_read(lba,reply+12,512);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         response->length=ok?524:12;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==30 && lba<=1) {
         bool ok=ln_arm926_instruction_cache(lba!=0);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,ln_arm926_cache_control());response->length=16;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==31 && !lba) {
@@ -365,7 +373,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
     if((operation==28 || operation==29) && !lba) {
         int status=operation==28?(ln_pcf50635_battery_begin(&battery,pmu_write,ln_time_us())?0:-1):
             ln_pcf50635_battery_poll(&battery,pmu_read,ln_time_us());
-        reply_header(reply,operation);ln_write_le32(reply+8,(uint32_t)status);
+        reply_status(reply,operation,(uint32_t)status);
         ln_write_le32(reply+12,battery.raw);ln_write_le32(reply+16,battery.millivolts);
         response->length=20;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -384,13 +392,13 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         else return 1;
         struct ln_ata_state state;ln_ata_state_snapshot(&state);
         struct ln_ata_result result={0};bool finished=ln_ata_take(&result);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,state.initialized);ln_write_le32(reply+16,state.initializing);
         ln_write_le32(reply+20,state.failed);ln_write_le32(reply+24,state.busy);
         ln_write_le32(reply+28,(uint32_t)state.sectors);ln_write_le32(reply+32,finished?result.status:0xffffffffu);
         response->length=36;
         if(finished && !result.status && result.sectors_done==1){
-            for(unsigned i=0;i<512;i++)reply[36+i]=sector_data[i];response->length+=512;
+            reply_copy(reply+36,sector_data,512);response->length+=512;
         }
         response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -409,11 +417,11 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
             const uint16_t *pixels=ln_display_snapshot();
             if(!pixels)return 1;
             for(unsigned i=0;i<256;i++)ln_write_le16(reply+12+i*2,pixels[lba*256+i]);
-            reply_header(reply,operation);ln_write_le32(reply+8,lba);
+            reply_status(reply,operation,lba);
             response->length=524;response->flags=LINNET_LINK_ACK;return 1;
         } else return 1;
         struct ln_display_presentation status;ln_display_presentation_snapshot(&status);
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,ln_display_busy());ln_write_le32(reply+16,status.frames_completed);
         ln_write_le32(reply+20,ln_display_busy()?0:ln_display_snapshot_crc32());
         response->length=24;response->flags=LINNET_LINK_ACK;return 1;
@@ -431,7 +439,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
             if(ok)tone_remaining=1000;
             else {(void)ln_codec_mute(codec_write,true);(void)ln_s5l_pcm_stop();}
         } else if(operation==19)ok=false;
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,tone_remaining);ln_write_le32(reply+16,tone_completed);ln_write_le32(reply+20,tone_error);
         response->length=24;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -441,7 +449,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         bool ok=operation!=17 || ln_s5l_pcm_begin(silence,64);
         uint32_t status[5];ln_s5l_pcm_status(status);
         if(operation==18)ok=ln_s5l_pcm_stop() && ok;
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         for(unsigned i=0;i<5;i++)ln_write_le32(reply+12+i*4,status[i]);
         response->length=32;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -471,7 +479,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         struct ln_input_state state={0};
         bool ok=operation!=12 || ln_input_init();
         ok=ln_input_poll(&state)&&ok;
-        reply_header(reply,operation);ln_write_le32(reply+8,ok);
+        reply_status(reply,operation,ok);
         ln_write_le32(reply+12,state.buttons);ln_write_le32(reply+16,state.packets);
         ln_write_le32(reply+20,state.invalid_packets);ln_write_le32(reply+24,(uint32_t)state.wheel_delta);
         reply[28]=state.wheel_position;reply[29]=state.touched;reply[30]=state.hold;reply[31]=state.headphones;
@@ -492,7 +500,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
     }
     if((operation==9 || operation==10) && !lba) {
         uint32_t phase=operation==9?(ln_n25_panel_start(true)?1u:0xffffffffu):ln_n25_panel_poll();
-        reply_header(reply,operation);ln_write_le32(reply+8,phase);
+        reply_status(reply,operation,phase);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }
     if(operation==8 && (lba==0 || lba==0x0a || lba==0x0b || lba==0x0c || lba==0x0d)) {
@@ -501,8 +509,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         bool ok=powered && ln_s5l_lcd_mode(0x80000c20u) && ln_s5l_lcd_command(lba?(uint16_t)lba:4);
         uint8_t id[4]={0};
         for(unsigned i=0;i<4 && ok;i++)ok=ln_s5l_lcd_read(id+i);
-        reply_header(reply,operation);
-        ln_write_le32(reply+8,ok);ln_write_le32(reply+12,LN_REG(0x3830001cu));
+        reply_status(reply,operation,ok);ln_write_le32(reply+12,LN_REG(0x3830001cu));
         for(unsigned i=0;i<4;i++)reply[16+i]=id[i];
         response->length=20;response->flags=LINNET_LINK_ACK;return 1;
     }
@@ -514,7 +521,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
     response->length=24;
     if(result[3]==8 && !result[4] && result[5]==256) {
         const uint8_t *data=(const uint8_t *)(uintptr_t)result[7];
-        for(unsigned i=0;i<512;i++)reply[24+i]=data[i];
+        reply_copy(reply+24,data,512);
         response->length+=512;
     }
     response->flags=LINNET_LINK_ACK;return 1;

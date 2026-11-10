@@ -64,6 +64,9 @@ def publish(identity, image_path):
             report.get('device_serial') != ('' if info['profile'] == 'release' else identity['linnet_usb_serial']) or
             info['load_address'] != spec['load_address'] or len(image) > spec['os_capacity_bytes']):
         raise ValueError('native update image or mounted target mismatch')
+    if 'serial_binding' in report:
+        from tools.studio.firmware_binding import validate_binding
+        validate_binding(image, report, identity['linnet_usb_serial'])
     with _exclusive(identity):
         current = refresh(identity)
         root = Path(current['root']).resolve(strict=True)
@@ -82,7 +85,8 @@ def publish(identity, image_path):
                 classic_recovery.preserve(current)
             refresh(current)
             verified=installed_state(root,identity['target_id'])
-            if verified.get('build_id')!=info['build_id'] or verified['state']!='installed':
+            if (verified.get('build_id')!=info['build_id'] or verified.get('image_sha256')!=info['sha256'] or
+                    verified['state']!='installed'):
                 raise OSError('Initial OS installation readback failed')
             # Native Classic setup bypasses the generic package provisioner.
             # Create the shared brightness/menu store before reporting success.

@@ -196,7 +196,8 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
                 raise ValueError('a pending OS candidate requires an explicit expected OS identity')
             if installed['profile'] in ('dev', 'trace'):
                 expected_os = next(image for image in installed['images']
-                                   if image['build_id'] == installed['build_id'])
+                                   if image['build_id'] == installed['build_id'] and
+                                   image['sha256'] == installed['image_sha256'])
     if expected_os is not None:
         if (not isinstance(expected_os, dict) or expected_os.get('target_id') != manifest['image']['target_id'] or
             expected_os.get('profile') not in ('dev', 'trace') or

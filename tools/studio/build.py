@@ -153,15 +153,22 @@ def memory_budget(sections, spec, resident_limit):
                       linked_section_bytes=sum(item['bytes'] for item in retained)))
 
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
-          boot_selector="none", jobs=2, link_optimization="none"):
+          boot_selector="none", jobs=2, link_optimization="none", portable_serial=False, native_maintenance=False):
     target = target_id(target)
     spec = resolved_target_spec(target)
     if not spec["build_enabled"]:
         raise ValueError(f"{target}: {spec['bringup_blocker']}")
+    if native_maintenance:
+        if target != 'photo4g-p98' or kind != 'os' or profile not in ('dev', 'trace') or portable_serial:
+            raise ValueError('Native maintenance requires a source Photo Developer OS build')
+        if system_config is None:
+            system_config = 'config/photo-native-maintenance.toml'
     if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
         system_config = f"targets/{target}/system.toml"
     if profile not in ("release", "dev", "trace"):
         raise ValueError("profile must be release, dev or trace")
+    if portable_serial and profile != 'dev':
+        raise ValueError('Portable USB serial requires a developer build')
     if kind not in ("os", "boot"):
         raise ValueError("image kind must be os or boot")
     if probe not in ("frame", "crash", "hang"):
@@ -191,6 +198,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     chain = toolchain()
     configuration = dict(profile=profile, target_id=target, kind=kind,
                           probe=probe, device_serial=device_serial)
+    if portable_serial:
+        configuration['portable_serial'] = True
+    if native_maintenance:
+        configuration['native_maintenance'] = True
     if service_sources:
         configuration['link_optimization'] = dict(mode=link_optimization,
             sources=list(service_sources), compiler_flags=service_flags, linker_flags=lto_link_flags)
@@ -291,6 +302,11 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     (generated / "linnet_build.h").write_text('#define LINNET_BUILD_ID "' + build_id + '"\n#define LINNET_BUILD_ID_BYTES {' + ','.join('0x' + build_id[i:i+2] for i in range(0, 64, 2)) + '}\n#define LINNET_SYSTEM_VERSION "' + version + '"\n')
     with (generated / "linnet_build.h").open('a') as header:
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
+        if portable_serial:
+            header.write('extern const char ln_bundle_serial[33];\n'
+                '#undef LINNET_USB_SERIAL\n#define LINNET_USB_SERIAL ln_bundle_serial\n')
+    if portable_serial:
+        (generated / 'bundle_serial.c').write_text('const char ln_bundle_serial[33] = "' + device_serial + '";\n')
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
     target_sources = spec["sources"]
     hal = ROOT / "hal" / spec["hal_family"]
@@ -324,6 +340,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     add_sources([ROOT / target_sources["startup"], hal / "entry.S",
                  ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                  ROOT / "kernel/main.c", ROOT / "kernel/memory.S"], "base startup")
+    if portable_serial:
+        add_sources([generated / 'bundle_serial.c'], 'portable USB serial', ['-fno-lto'])
     add_sources([ROOT / "boot/src/linnet_boot.c"], "boot service")
     add_sources([hal / name for name in ("core.c", "input.c")], "HAL core")
     add_sources([ROOT / target_sources["power"]], "target power")
@@ -382,7 +400,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     else:
         add_sources([ROOT / "kernel/storage_link.c"], "development storage")
         if kind == "os":
-            add_sources([ROOT / target_sources["native_update"]], "target native update")
+            add_sources([ROOT / (target_sources['native_update'] if native_maintenance else 'services/update/native.c')],
+                        'source native maintenance' if native_maintenance else 'standard development maintenance status')
     if kind == "os":
         add_sources([ROOT/"ui/runtime/ui.c"], "OS UI runtime")
         add_sources([generated/"linnet_ui.c"], "generated OS UI",
@@ -616,6 +635,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                   memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=resident_limit, retained_limit_bytes=spec['mailbox_bytes'],
                               static_budget=memory_budget(sections, spec, resident_limit)),
                   release_exclusion=verification, limitation=watchdog_limitation)
+    report['version'] = version
+    if portable_serial:
+        from tools.studio.firmware_binding import describe_binding
+        report['serial_binding'] = describe_binding(envelope, symbols, device_serial)
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
     if use_object_cache:

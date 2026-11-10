@@ -20,6 +20,55 @@ def _directory_target(identity):
     return spec['enabled'] and spec['boot_layout'] == 'ipod-directory'
 
 
+def _upgrade_volume_identity(identity, transaction, path, digest, manifest, artifacts):
+    """Verify the FAT identity recorded by a completed native Boot upgrade."""
+    storage = json.loads(artifacts['device.json'])['storage']
+    if (path != transaction / 'apple-recovery-plan/plan.json' or
+            storage['disk_serial'] != identity['linnet_usb_serial']):
+        return False
+    for worker_path in transaction.glob('worker-*.json'):
+        try:
+            job = json.loads(worker_path.read_text(encoding='utf-8'))
+            recorded = job['identity']
+            result_path = Path(job['result']).resolve(strict=True)
+            if (job['mode'] != 'upgrade-boot' or
+                    Path(job['transaction']).resolve(strict=True) != transaction or
+                    result_path.parent != transaction or
+                    recorded['native_target_id'] != identity['target_id'] or
+                    recorded['disk_serial'] != storage['disk_serial'] or
+                    recorded['volume_unique_id'] != storage['volume_id'] or
+                    any(recorded[key] != identity[key] for key in
+                        ('target_id', 'linnet_usb_serial', 'volume_serial', 'disk_bytes',
+                         'sector_bytes', 'partition_offset', 'partition_bytes'))):
+                continue
+            result = json.loads(result_path.read_text(encoding='utf-8'))
+            recovery, applied = result['recovery'], result['applied']
+            if (result['operation'] != 'upgrade-boot' or result['passed'] is not True or
+                    recovery['strategy'] != 'native-directory' or recovery['phase'] != 'installed' or
+                    Path(recovery['transaction']).resolve(strict=True) != transaction or
+                    Path(recovery['plan']).resolve(strict=True) != path or recovery['plan_sha256'] != digest or
+                    recovery['device_id'] != manifest['expected_storage_serial'] or
+                    recovery['target_id'] != identity['target_id'] or
+                    recovery['linnet_usb_serial'] != identity['linnet_usb_serial'] or
+                    recovery['boot_build_id'] != manifest['image']['build_id'] or
+                    recovery['firmware_backup_sha256'] != manifest['firmware_backup_sha256'] or
+                    applied['operation'] != 'apply' or applied['passed'] is not True or
+                    applied['after']['directory'] != 'candidate' or
+                    applied['after']['original_payload_intact'] is not True or
+                    Path(applied['plan']).resolve(strict=True) != transaction / 'native-plan/plan.json'):
+                continue
+            native_manifest, native_artifacts, _firmware = native.load_plan(
+                applied['plan'], applied['reviewed_plan_sha256'])
+            # Upgrade plans retain the native device.json; only the execution
+            # serial differs in the Apple recovery descriptor. Verify all bytes.
+            if (native_manifest == dict(manifest, expected_storage_serial=storage['disk_serial']) and
+                    native_artifacts == artifacts):
+                return True
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+    return False
+
+
 def _inputs(identity, transaction, path, digest, device_id, *, cache_scope=None):
     from tools.studio import installer
 
@@ -38,7 +87,7 @@ def _inputs(identity, transaction, path, digest, device_id, *, cache_scope=None)
     if (manifest['target_id'] != identity['target_id'] or
             saved['target_id'] != identity['target_id'] or
             manifest['expected_storage_serial'] != device_id or
-            storage['disk_serial'] != device_id or
+            storage['disk_serial'] not in (device_id, identity['linnet_usb_serial']) or
             manifest['expected_linnet_usb_serial'] != identity['linnet_usb_serial'] or
             saved['linnet_usb_serial'] != identity['linnet_usb_serial'] or
             identity['disk_serial'] != (identity['linnet_usb_serial'] if eligible(identity) else device_id) or
@@ -62,7 +111,7 @@ def _inputs(identity, transaction, path, digest, device_id, *, cache_scope=None)
                 all(original.get(key) == identity[key] for key in
                     ('target_id', 'linnet_usb_serial', 'disk_bytes', 'sector_bytes', 'partition_offset', 'partition_bytes'))):
             originals.append(original)
-    if not originals:
+    if not originals and not _upgrade_volume_identity(identity, transaction, path, digest, manifest, artifacts):
         raise ValueError('The original installation has no matching FAT volume identity')
     return manifest, artifacts, firmware
 

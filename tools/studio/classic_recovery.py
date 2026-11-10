@@ -16,8 +16,9 @@ from tools.link import classic_nor as nor
 FORMAT = 'linnet-classic-nor-recovery-v1'
 FILES = ('ORIGINAL.BIN', 'ORIGINAL.BIN.json', 'INSTALLED.BIN', 'NOR.JSON')
 APPLE_DISK_INSTRUCTIONS = (
-    'The normal USB disk connection in Apple iPod software is sufficient. '
-    'If its disk is missing, unplug and reconnect this same iPod. '
+    'Starting in Apple iPod software is expected. Windows must also mount its USB disk '
+    'so Media Manager can finish removing Linnet’s files. '
+    'If the iPod stays on Apple’s menus and its disk is missing, unplug and reconnect this same iPod. '
     'If it still does not appear, turn Hold off, '
     'hold Menu + Select until the Apple logo appears, then immediately hold '
     'Select + Play/Pause until Disk Mode appears. Keep USB connected.'

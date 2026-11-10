@@ -1,4 +1,6 @@
 """Settings rows and contextual actions for the desktop Media Manager."""
+import sys
+
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QSizePolicy, QToolButton, QWidget
@@ -90,12 +92,6 @@ def build_settings_page(window):
     window.online_artwork.setChecked(window.settings.value('onlineArtwork', True, type=bool))
     window.online_artwork.toggled.connect(lambda enabled: window.settings.setValue('onlineArtwork', enabled))
     _row(prepare, 'Album artwork', _muted('Find missing iTunes album covers using MusicBrainz and Cover Art Archive.'), window.online_artwork)
-    window.tools_label = _muted('Checking FFmpeg and FFprobe…')
-    tools = button('Choose folder…', window.locate_tools, None, 'folder')
-    tools.setMinimumWidth(170)
-    _row(prepare, 'Conversion tools', window.tools_label, tools)
-    tools.setToolTip('Choose the folder containing FFmpeg and FFprobe for video conversion.')
-
     appearance = _card(layout, 'iPod appearance')
     window.apple_font_status = _muted('Connect a color iPod in Disk Mode to choose its font.')
     window.font_chooser, font_actions = _action_menu('Choose font', (
@@ -138,6 +134,13 @@ def build_settings_page(window):
     _row(storage, 'Backups and recovery', window.cache_protected, window.backups_chooser)
 
     window.advanced_toggle, details = _advanced(layout)
+    window.tools_label = None
+    if not getattr(sys, 'frozen', False):
+        window.tools_label = _muted('Checking FFmpeg and FFprobe…')
+        tools = button('Choose folder…', window.locate_tools, None, 'folder')
+        tools.setMinimumWidth(170)
+        tools.setToolTip('Choose FFmpeg and FFprobe when running Media Manager from source.')
+        _row(details, 'FFmpeg (source builds)', window.tools_label, tools)
     details.addWidget(_muted('These options stay active until you change them or close Media Manager.'))
     window.verify_audio = CheckBox('Verify complete audio files')
     details.addWidget(window.verify_audio, 0, Qt.AlignLeft)

@@ -33,14 +33,16 @@ jobs:
           cache-dependency-path: tools/studio/requirements*.txt
       - name: Install build dependencies
         run: python -m pip install -r tools/studio/requirements-build.txt
-      - name: Cache verified compiler and Apple helper downloads
+      - name: Cache verified compilers and native conversion tools
         uses: actions/cache@v4
         with:
           path: |
             out/toolchains
             out/downloads/apple-tools
             out/apple-tools
-          key: windows-x64-tools-${{ hashFiles('config/toolchain.toml', 'config/apple-tools.json', 'config/inno-setup.json', 'tools/studio/apple_tools.py', 'tools/studio/toolchain_setup.py', 'tools/studio/inno_setup.py', 'tools/maintenance/a1238_apple/managed_*') }}
+            out/downloads/conversion-tools
+            out/conversion-tools
+          key: windows-x64-tools-${{ hashFiles('config/toolchain.toml', 'config/apple-tools.json', 'config/inno-setup.json', 'config/conversion-tools.json', 'tools/studio/apple_tools.py', 'tools/studio/conversion_tools.py', 'tools/studio/toolchain_setup.py', 'tools/studio/inno_setup.py', 'tools/maintenance/a1238_apple/managed_*') }}
       - name: Set up and check the pinned toolchain
         run: |
           python linnet setup
@@ -52,8 +54,10 @@ jobs:
         run: |
           $targets = @('photo4g-p98', 'video5g-m25', 'ipod4g-q21', 'classic6g-n25')
           foreach ($target in $targets) {
-            python linnet release bundle --target $target --jobs 4 --output "out/releases/linnet-$target.zip"
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            foreach ($build in @('user', 'dev')) {
+              python linnet release bundle --target $target --build $build --jobs 4 --output "out/releases/linnet-$target-$build.zip"
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
           }
       - name: Package Windows Media Manager
         run: python linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe

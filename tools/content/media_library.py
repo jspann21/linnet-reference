@@ -182,7 +182,7 @@ def _catalog_error(kind, path, error):
 
 
 def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tracks=None,
-               _validated_identity=False, category_errors=None):
+               _validated_identity=False, category_errors=None, progress=None):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     if not _validated_identity:
         identity = manager.refresh(identity)
@@ -205,6 +205,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     native_video_extensions = manager.native_video_extensions(identity)
     result = catalog_errors
     music_records = records_by_kind['Music']
+    if progress:
+        progress('Reading prepared music library…')
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None),
                                target=identity['target_id'])
@@ -212,10 +214,15 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     if retail_tracks is None:
         retail_tracks = available_tracks(root, known_records=music_records,
                                          known_inodes=getattr(records_by_kind, 'inodes', None))
+    if progress:
+        progress('Reading Apple music details…')
     retail = retail_metadata(root, tracks_rows=retail_tracks)
     from .host_state import cache_data_directory
     source_metadata = _source_music_metadata(root, music_records, cache_data_directory(cache_root(identity)), retail, metadata,
-                                             identity['target_id'], cache_scope=identity.get('media_cache_volume_scope'))
+                                             identity['target_id'], cache_scope=identity.get('media_cache_volume_scope'),
+                                             progress=progress)
+    if progress:
+        progress('Building collection view…')
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
@@ -297,7 +304,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     return result
 
 
-def _source_music_metadata(root, records, cache_root, retail=None, published=None, target=None, *, cache_scope=None):
+def _source_music_metadata(root, records, cache_root, retail=None, published=None, target=None, *, cache_scope=None,
+                           progress=None):
     from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, compatibility_issue, EXTENSIONS
     records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
     if not records:
@@ -308,6 +316,8 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
     relatives = []
     try:
         for index, (path, before) in enumerate(records):
+            if progress:
+                progress(f'Reading music details · song {index + 1:,} of {len(records):,}')
             if index % 128 == 0:
                 relatives = [p.relative_to(root).as_posix() for p, _ in records[index:index + 128]]
                 prefetched = cache.prefetch(root, relatives)

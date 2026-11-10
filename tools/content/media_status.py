@@ -4,6 +4,7 @@ from functools import lru_cache
 import json
 from pathlib import Path
 import stat
+import sys
 import time
 
 from . import media_manager as media
@@ -139,7 +140,7 @@ def _remember_verified(identity, verified, before):
         pass
 
 
-def _video_readiness(inventory, published, identity, state=None, verified=None):
+def _video_readiness(inventory, published, identity, state=None, verified=None, *, progress=None):
     state = state if isinstance(state, dict) else {}
     video_state = state.get('Videos', {})
     if not isinstance(video_state, dict):
@@ -229,12 +230,12 @@ def _video_readiness(inventory, published, identity, state=None, verified=None):
             return 'Needs update'
         sources.append((source, outputs, current))
     for row in ready:
-        if not media._outputs_match(root, [saved_outputs[row['path'].casefold()]], verified=verified):
+        if not media._outputs_match(root, [saved_outputs[row['path'].casefold()]], verified=verified, progress=progress):
             return 'Needs update'
     for source, outputs, current in sources:
         if stamp(source) != current:
             return 'Needs update'
-        if not media._outputs_match(root, outputs, verified=verified):
+        if not media._outputs_match(root, outputs, verified=verified, progress=progress):
             return 'Needs update'
     if ready:
         return 'Ready'
@@ -248,7 +249,7 @@ def _preparation_state(identity):
         return {}
 
 
-def _library_snapshot(identity):
+def _library_snapshot(identity, *, progress=None):
     root = Path(identity['root'])
     from .retail_media import available_tracks, images, check_tracks_access
     check_tracks_access(root)
@@ -263,15 +264,20 @@ def _library_snapshot(identity):
     except (OSError, ValueError):
         # Let the existing metadata readers handle inaccessible databases.
         music_inodes = True
-    records = records_by_kind(root, include_inodes=music_inodes)
+    records = records_by_kind(root, include_inodes=music_inodes, progress=progress)
+    if progress:
+        progress('Reading Apple music library…')
     retail_tracks = available_tracks(root, known_records=records['Music'], known_inodes=records.inodes)
+    if progress:
+        progress('Reading Apple photo library…')
     retail_photos = images(root)
     inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
-                             fingerprint_kinds=('Music', 'Notes', 'Photos'), retail_tracks=retail_tracks)
+                             fingerprint_kinds=('Music', 'Notes', 'Photos'), retail_tracks=retail_tracks,
+                             progress=progress)
     category_errors = []
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
                                     retail_tracks=retail_tracks, category_errors=category_errors,
-                                    _validated_identity=True)
+                                    _validated_identity=True, progress=progress)
     inventory['Music']['apple_only'] = sum(row.get('apple_only', False) for row in rows)
     inventory['Music']['not_in_apple'] = (sum(path.casefold() not in retail_tracks
                                             for path in inventory['Music']['files']) if retail_tracks else 0)
@@ -282,7 +288,7 @@ def _library_snapshot(identity):
     return state, skipped, records, inventory, rows, retail_tracks
 
 
-def inspect(identity, photo_dimension=640, verification="metadata"):
+def inspect(identity, photo_dimension=640, verification="metadata", *, progress=None):
     from tools.studio import installer
     media._volume_guard(identity)
     root = Path(identity['root'])
@@ -291,19 +297,23 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     # before reporting readiness or returning anything to the caller.
     with ThreadPoolExecutor(max_workers=2) as pool:
         refresh_future = pool.submit(media.refresh, identity)
-        snapshot_future = pool.submit(_library_snapshot, identity)
+        snapshot_future = pool.submit(_library_snapshot, identity, progress=progress)
         refreshed = refresh_future.result()
         boot_future = pool.submit(installer.assess, refreshed, _validated_identity=True)
         state, skipped, records, inventory, rows, retail_tracks = snapshot_future.result()
         if identity.get('media_cache_disk_serial') != refreshed.get('media_cache_disk_serial'):
-            state, skipped, records, inventory, rows, retail_tracks = _library_snapshot(refreshed)
+            state, skipped, records, inventory, rows, retail_tracks = _library_snapshot(refreshed, progress=progress)
         identity = refreshed
+        if progress:
+            progress('Loading previous preparation checks…')
         verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
                                      identity['partition_offset'], identity['volume_unique_id'],
                                      cache_disk_serial=identity.get('media_cache_disk_serial'))
         if len(verified) > 4096:
             verified.clear()
         verified_before = verified.copy()
+        if progress:
+            progress('Checking installed firmware and startup options…')
         boot_review = boot_future.result()
     identity = boot_review['identity']
     identity['linnet'] = boot_review['linnet']
@@ -323,6 +333,12 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             if bucket is not None:
                 bucket.append(row)
     for kind in media.KINDS:
+        if progress:
+            progress('Checking prepared ' + kind.lower() + '…')
+        def checking(event):
+            if progress:
+                progress('Checking prepared ' + kind.lower() +
+                         f" · file {event['current'] + 1:,} of {event['total']:,}")
         if inventory[kind].get('errors'):
             readiness[kind] = 'Needs repair'
             continue
@@ -331,12 +347,14 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             saved = {}
         published = published_by_kind[kind]
         if kind == 'Videos':
-            readiness[kind] = _video_readiness(inventory[kind], published, identity, state, verified)
+            readiness[kind] = _video_readiness(inventory[kind], published, identity, state, verified,
+                                              progress=checking if progress else None)
             continue
         option = media.preparation_option(kind, identity, photo_dimension, verification)
         signature = f"{option}:{inventory[kind]['fingerprint']}"
         if (saved.get('signature') == signature and saved.get('outputs') and
-                media._outputs_match(root, saved['outputs'], verified=verified)):
+                media._outputs_match(root, saved['outputs'], verified=verified,
+                                     progress=checking if progress else None)):
             readiness[kind] = 'Ready'
         elif published:
             readiness[kind] = 'Needs update' if inventory[kind]['count'] else 'Prepared library retained'
@@ -358,7 +376,11 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     if any(row['kind'] == 'Music' and row['status'].startswith('Needs conversion:') for row in rows):
         readiness['Music'] = 'Needs conversion'
     from . import apple_os
+    if progress:
+        progress('Checking media availability in Apple software…')
     apple = apple_os.inspect(identity, records_by_kind=records, retail_tracks=retail_tracks)
+    if progress:
+        progress('Saving collection scan results on this computer…')
     _remember_verified(identity, verified, verified_before)
     return identity, inventory, rows, readiness, apple, boot_review
 
@@ -418,7 +440,9 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     audio_issues = [dict(source=item['source'], reason=item['compatibility_issue']) for item in copies
                     if 'compatibility_issue' in item][:5]
     if audio_conversions and not ffmpeg:
-        raise ValueError('Audio conversion needs FFmpeg on the computer. Choose its folder in Settings.')
+        raise ValueError('Audio preparation could not start. ' +
+            ('Reinstall Linnet and try again.' if getattr(sys, 'frozen', False) else
+             'Choose FFmpeg and FFprobe in Settings → Advanced preparation.'))
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
                             snapshots=snapshots, ffprobe=ffprobe, cancelled=cancelled,
                             replacements=replacements) if 'Videos' in selected else []

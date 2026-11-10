@@ -128,7 +128,7 @@ def _apple_recovery_plan(path, digest, output, *, identity, apple_serial):
                         expected_serial=identity['disk_serial'], new_serial=apple_serial)
 
 
-def upgrade(identity, *, build='dev', firmware=None, from_source=False,
+def upgrade(identity, *, build=None, firmware=None, from_source=False,
             progress=lambda _message: None):
     from tools.studio import installer
     from tools.content.media_manager import refresh
@@ -146,9 +146,11 @@ def upgrade(identity, *, build='dev', firmware=None, from_source=False,
         return dict(passed=True, result=installer._run_elevated(job_path),
                     requires_safe_eject=True)
     reviewed = installer.assess(current, _validated_identity=True)
+    from tools.studio.firmware_bundle import selected_build
+    build = selected_build(firmware, build)
     if not available(reviewed):
         raise ValueError('This iPod does not have a verified native Boot upgrade path')
-    if build not in ('user', 'dev') or (build == 'dev' and not from_source):
+    if build not in ('user', 'dev') or (from_source and firmware is not None):
         raise ValueError('Choose a supported Linnet firmware source')
     method = reviewed['recovery'].get('installation_method', 'native-preserve')
     if method not in ('native-preserve', 'native-selector'):
@@ -162,8 +164,8 @@ def upgrade(identity, *, build='dev', firmware=None, from_source=False,
         if firmware is None:
             raise ValueError('Choose a Linnet firmware ZIP before upgrading Boot')
         from tools.studio.firmware_bundle import load
-        artifacts = load(firmware, current, method)
-    if artifacts['boot_build_id'] == reviewed['recovery']['boot_build_id']:
+        artifacts = load(firmware, current, method, build=build)
+    if installer.inspect_image(Path(artifacts['boot_image']).read_bytes()) == _saved_plan(reviewed)[2]['image']:
         raise ValueError('The selected firmware already has the installed startup selector')
     recovery_identity = dict(current, disk_serial=reviewed['recovery']['device_id'])
     transaction = installer._transaction(recovery_identity, artifacts)
@@ -223,8 +225,9 @@ def _finish_pending(expected, pending_marker, transaction):
                 item['expected_device_bytes'] != expected['disk_bytes'] for item in (old, new, apple, original)) or
             expected['disk_serial'] not in (upgrade['native_serial'], pending_marker['device_id']) or
             new['image']['build_id'] != upgrade['boot_build_id'] or
+            new['image'] != apple['image'] or
             new['firmware_backup_sha256'] != apple['firmware_backup_sha256'] or
-            original['image']['build_id'] != old['image']['build_id']):
+            original['image'] != old['image']):
         raise ValueError('Pending Boot upgrade plans differ from this iPod')
     live_prior = paths['prior'] if expected['disk_serial'] == upgrade['native_serial'] else prior_apple
     live_new = paths['native'] if expected['disk_serial'] == upgrade['native_serial'] else paths['apple']

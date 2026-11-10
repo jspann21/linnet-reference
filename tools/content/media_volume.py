@@ -48,7 +48,9 @@ foreach ($disk in @(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -C
   $drive=[string]$partition.DriveLetter+':'
   try {
    $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
-   if (!$logical) {throw 'Volume identity is unavailable'}
+   if (!$logical -or [string]$logical.VolumeSerialNumber -notmatch '^[0-9A-Fa-f]{8}$') {
+    throw 'Windows has found this iPod but has not finished mounting its volume. Wait a few seconds, then reconnect the same iPod if its disk still does not appear.'
+   }
    $items+=@{number=[int]$disk.Number;serial=$disk.SerialNumber.Trim();volume=$logical.VolumeSerialNumber;drive=$drive}
   }
   catch {$errors+=@{drive=$drive;message=[string]$_}}

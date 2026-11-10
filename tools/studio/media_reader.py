@@ -65,7 +65,7 @@ def _reader_job(process):
 
 
 def read(action, *, identity=None, photo_dimension=640, verification='metadata',
-         cancelled=lambda: False):
+         cancelled=lambda: False, progress=None):
     """Cancel even a blocked device read without abandoning a running thread."""
     from tools.content.media_manager import Cancelled
     from tools.studio.targets import ROOT
@@ -77,6 +77,7 @@ def read(action, *, identity=None, photo_dimension=640, verification='metadata',
     with tempfile.TemporaryDirectory(prefix='linnet-reader-') as temporary:
         request = Path(temporary) / 'request.json'
         response = Path(temporary) / 'response.json'
+        status = Path(temporary) / 'progress.json'
         request.write_text(json.dumps(dict(action=action, identity=identity,
             photo_dimension=photo_dimension, verification=verification)), encoding='utf-8')
         command = ([sys.executable, '--media-read'] if getattr(sys, 'frozen', False) else
@@ -91,9 +92,23 @@ def read(action, *, identity=None, photo_dimension=640, verification='metadata',
                 if cancelled():
                     raise Cancelled()
                 request.with_suffix('.ready').touch()
+                started = time.monotonic()
+                message, shown, next_update = 'Starting collection scan…', None, 0.0
                 while True:
                     if cancelled():
                         raise Cancelled()
+                    if progress:
+                        try:
+                            update = json.loads(status.read_text(encoding='utf-8'))
+                            if isinstance(update, str):
+                                message = update
+                        except (OSError, ValueError):
+                            pass
+                        now = time.monotonic()
+                        if message != shown or now >= next_update:
+                            elapsed = int(now - started)
+                            progress(f'{message} · {elapsed // 60}:{elapsed % 60:02} elapsed')
+                            shown, next_update = message, now + 1
                     try:
                         process.wait(timeout=0.1)
                         break
@@ -153,13 +168,35 @@ def main(arguments=None):
             from tools.studio.device_support import collect
             value = collect(identity=options['identity'])
         elif options['action'] == 'scan':
+            status = response.with_name('progress.json')
+            last_update, last_stage = 0.0, None
+            def progress(message):
+                nonlocal last_update, last_stage
+                now = time.monotonic()
+                stage = message.partition(' · ')[0]
+                if stage == last_stage and now - last_update < 0.2:
+                    return
+                # The snapshot reports from a worker thread. Only that thread
+                # reports until its future completes; subsequent stages run here.
+                try:
+                    staged = status.with_suffix('.tmp')
+                    staged.write_text(json.dumps(message), encoding='utf-8')
+                    staged.replace(status)
+                except OSError:
+                    pass  # Optional progress must not interrupt the scan.
+                last_update, last_stage = now, stage
             identity = options['identity']
+            progress('Checking the connected iPod…')
             media._volume_guard(identity)
             from tools.content.retail_media import check_tracks_access
+            progress('Checking access to the Apple music library…')
             check_tracks_access(identity['root'])
+            progress('Checking for interrupted media updates…')
             pending = publish.pending_publications(identity)
             value = (dict(publication_recovery_pending=True, identity=media.refresh(identity), groups=pending)
-                     if pending else media_status.inspect(identity, options['photo_dimension'], options['verification']))
+                     if pending else media_status.inspect(identity, options['photo_dimension'], options['verification'],
+                                                          progress=progress))
+            progress('Returning collection scan results…')
         else:
             raise ValueError('Unknown device read operation')
         result = dict(value=value)

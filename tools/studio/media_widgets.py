@@ -189,7 +189,8 @@ class StatusLabel(QLabel):
         self.render_message()
 
     def render_message(self):
-        self.setText(self.fontMetrics().elidedText(self.message, Qt.ElideRight, max(0, self.contentsRect().width())))
+        self.setText(self.message if self.wordWrap() else
+                     self.fontMetrics().elidedText(self.message, Qt.ElideRight, max(0, self.contentsRect().width())))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

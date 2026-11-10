@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog
 from tools.content import apple_font, media_manager as media, media_trash
 from tools.content.media_manager import format_size as size
 from tools.studio import boot_upgrade, installer, startup_default
+from tools.studio.targets import TARGETS
 
 from .media_widgets import ComboBox, box, button, label
 
@@ -100,7 +101,7 @@ class SetupWorkspace:
         self.show_progress('Choose the default system and use Menu at startup for a one-time choice.'
                            if section == 'startup' else
                            'Review removal options below.' if section == 'remove' else
-                           'Choose User or Developer build, then apply the update. Your media is kept.')
+                           'Choose a firmware ZIP, then apply the update. Your media is kept.')
 
     def update_setup_status(self):
         loading = self.busy and self.review is None
@@ -186,17 +187,17 @@ class SetupWorkspace:
         identity = review['identity']
         self.setup_device.setText((identity.get('volume_label') or 'iPod') + ' · ' +
                                   identity['target_name'].replace('Linnet for ', ''))
-        self.setup_software.setText('Connected in Disk Mode · ' + identity['drive'] + ' · …' + identity['disk_serial'][-6:])
+        self.setup_software.setText('Connected by USB · ' + identity['drive'] + ' · …' + identity['disk_serial'][-6:])
         self.setup_software.setToolTip(installer.build_description(review['linnet']))
         native = review['identity'].get('native_target_id') == review['identity']['target_id']
         available_boot = [option for option in review['boot_options'] if option['kind'] == 'linnet']
         with QSignalBlocker(self.boot_choice):
             self.boot_choice.clear()
             for option in available_boot:
-                suffix = (' · Current' if option.get('active') else
+                suffix = (' · Installed' if option.get('active') else
                           ' · Hold Menu' if option.get('chooser_available') else
                           ' · Unavailable' if not option.get('selectable') else '')
-                self.boot_choice.addItem(option['label'] + suffix, option)
+                self.boot_choice.addItem(('Developer firmware' if option.get('build') == 'dev' else 'User firmware') + suffix, option)
                 self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
             selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
                             next((i for i, option in enumerate(available_boot) if option.get('selectable')), -1))
@@ -218,7 +219,7 @@ class SetupWorkspace:
                 summary = ('Linnet Boot is already installed. Start Linnet Boot, enter Linnet Disk Mode, '
                            'then reconnect and refresh to install Linnet OS. Another Boot installation is not needed.')
         elif review['action'] == 'install' and review['linnet']['state'] == 'absent' and review['strategy']!='classic-bootstrap':
-            summary = 'Ready to install Linnet. Choose firmware and a build below, then install and eject safely.'
+            summary = 'Ready to install Linnet. Choose a firmware ZIP below, then install and eject safely.'
         self.install_detail.setText(summary)
         self.install_detail.setVisible(review['action'] in ('unsupported', 'attention', 'resume', 'adopt', 'installed') or
             review['linnet']['state'] not in ('installed', 'absent'))
@@ -247,6 +248,18 @@ class SetupWorkspace:
         self.update_install_action()
 
     def update_install_action(self):
+        resume = bool(self.review and self.review.get('action') == 'resume')
+        from_source = self.build_from_source.isChecked() and not getattr(sys, 'frozen', False) and not resume
+        selection = self.firmware_status() if not from_source and not resume else None
+        firmware = selection['firmware'] if selection else None
+        saved = ((self.review or {}).get('resume') or (self.review or {}).get('classic_setup') or {})
+        desired = saved.get('build') if resume else firmware['build'] if firmware else None
+        if desired:
+            with QSignalBlocker(self.boot_choice):
+                for index in range(self.boot_choice.count()):
+                    if (self.boot_choice.itemData(index) or {}).get('build') == desired:
+                        self.boot_choice.setCurrentIndex(index)
+                        break
         option = self.boot_choice.currentData(); method = self.method_choice.currentData()
         review = self.review
         can_install = bool(review and any(item.get('selectable') and item['kind'] == 'linnet'
@@ -256,13 +269,14 @@ class SetupWorkspace:
         upgrade = bool(review and getattr(self, 'boot_upgrade_available', False))
         pending = bool(review and getattr(self, 'boot_upgrade_pending', False))
         self.install_panel.setVisible(installed or can_install or upgrade or pending)
-        self.install_title.setText('Linnet' if installed else 'Resume installation' if review and review['action'] == 'resume' else 'Install Linnet')
+        self.install_title.setText('Installed firmware' if installed else 'Finish installation' if resume else 'Install Linnet')
         self.installed_build.setVisible(installed)
         profile = (review or {}).get('linnet', {}).get('profile')
-        self.installed_build.setText(installer.BUILD_LABELS.get(profile, 'Linnet') + ' installed' if installed else '')
+        labels = {'release': 'User firmware', 'dev': 'Developer firmware', 'trace': 'Developer trace firmware'}
+        self.installed_build.setText(labels.get(profile, 'Linnet firmware') if installed else '')
         self.installed_build.setToolTip(installer.build_description(review['linnet']) if installed else '')
         candidate = bool(installed and review['linnet'].get('candidate_pending'))
-        next_build = installer.BUILD_LABELS.get((review or {}).get('linnet', {}).get('next_profile'), 'Linnet')
+        next_build = labels.get((review or {}).get('linnet', {}).get('next_profile'), 'Firmware')
         self.build_summary.setText(next_build + ' ready to start. Eject safely to finish the update.' if candidate else
                                   'Includes diagnostics and Linnet Link.' if installed and profile in ('dev', 'trace') else
                                   'For everyday listening.' if installed else 'Your media stays on the iPod.')
@@ -272,24 +286,43 @@ class SetupWorkspace:
         self.build_summary.setVisible(not installed or candidate or not show_editor)
         self.build_editor_button.setVisible(installed and (can_install or upgrade) and not forced_editor)
         self.build_editor_button.setEnabled(not self.busy)
-        self.build_editor_button.setText('Hide build options' if self.build_editor_open else 'Change build or reinstall…')
+        self.build_editor_button.setText('Hide options' if self.build_editor_open else 'Change firmware…')
         self.uninstall_panel.setVisible(bool(review and (review['linnet']['state'] != 'absent' or
                                                         review['recovery'] or review['uninstall']['available'])))
         if review is None and not self.link_connection and not (self.busy and self.active_operation and self.active_operation.tag=='classic_install'):
             self.install_detail.hide()
         enabled = not self.busy and self.identity is not None and self.review is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
-        from_source = self.build_from_source.isChecked()
-        resume = bool(self.review and self.review.get('action') == 'resume')
-        self.build_from_source.setEnabled(not self.busy and not resume)
+        self.build_from_source.setEnabled(not self.busy and not resume and not getattr(sys, 'frozen', False))
+        self.build_title.setVisible(from_source)
+        self.boot_choice.setVisible(from_source)
+        self.source_build_detail.setVisible(from_source)
+        self.source_build_detail.setText('Includes diagnostics and Linnet Link.' if option and option.get('build') == 'dev' else
+                                         'For everyday use.')
+        self.source_options_button.setVisible(not resume)
+        self.source_options_button.setEnabled(not self.busy and not resume)
+        self.source_options.setVisible(not resume and self.source_options_button.isChecked())
         self.firmware_button.setEnabled(not self.busy and not resume)
-        self.firmware_picker.setVisible(not from_source)
-        self.firmware_label.setText(Path(self.firmware_path).name if self.firmware_path else 'Choose a matching firmware ZIP.')
-        self.firmware_label.setToolTip(self.firmware_path)
-        self.boot_detail.setText(option.get('detail', '') if option and not option.get('selectable') else
-                                 'For everyday use, without diagnostics or Linnet Link.' if option and option.get('build') == 'user' else
-                                 'Includes diagnostics and Linnet Link.' if option and option.get('build') == 'dev' else
-                                 option.get('detail', '') if option else '')
+        self.firmware_button.setVisible(not resume)
+        self.firmware_label.setVisible(bool(self.firmware_path) and not from_source and not resume)
+        self.firmware_label.set_message(Path(self.firmware_path).name if self.firmware_path else '', self.firmware_path)
+        if resume:
+            title = 'Saved ' + ('Developer' if desired == 'dev' else 'User') + ' firmware'
+            detail = 'Your saved installation files will be used. You do not need to select a ZIP.'
+            state, action = 'saved', 'Choose ZIP…'
+        elif from_source:
+            title = 'Compile ' + ('Developer' if option and option.get('build') == 'dev' else 'User') + ' firmware'
+            detail = 'Builds this source checkout on your computer before installing it on the iPod.'
+            state, action = 'source', 'Use a ZIP…'
+        else:
+            title, detail, state, action = (selection[key] for key in ('title', 'detail', 'state', 'action'))
+        self.firmware_summary.setText(title)
+        self.boot_detail.setText(detail)
+        self.firmware_button.setText(action)
+        if self.firmware_picker.property('state') != state:
+            self.firmware_picker.setProperty('state', state)
+            for widget in (self.firmware_picker, self.firmware_summary):
+                widget.style().unpolish(widget); widget.style().polish(widget); widget.update()
         show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice):
             widget.setVisible(show_methods and self.method_choice.count() > 1)
@@ -297,16 +330,14 @@ class SetupWorkspace:
         self.method_detail.setText(method.get('detail', '') if method and linnet else '')
         enabled = enabled and bool(method and method.get('enabled')) if linnet else enabled and not bool(option and option.get('active'))
         if linnet and not resume and not from_source:
-            enabled = enabled and bool(self.firmware_path) and option['build'] == 'user'
-            if option['build'] == 'dev':
-                self.boot_detail.setText('Developer builds are available from a source checkout.' if getattr(sys, 'frozen', False) else
-                    'Enable Build from source to compile diagnostics and Linnet Link for this iPod.')
+            enabled = enabled and bool(firmware)
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
-        self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
+        self.boot_choice.setEnabled(from_source and not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
         self.install_hint.setText('Keep USB connected while installation resumes.' if resume else
-            'Your media and settings are kept. Eject safely when the update finishes.' if installed else
+            'Media and settings are kept. Eject safely when finished.' if installed else
             'Keep USB connected until installation finishes.')
+        self.install_hint.setVisible(bool(firmware or from_source or resume))
         self.uninstall_button.setEnabled(not self.busy and self.device_connected and bool(
             self.identity and self.review and (self.review['uninstall']['available'] or
                                               self.review['uninstall'].get('blocker') == 'trash')))
@@ -332,16 +363,21 @@ class SetupWorkspace:
         self.boot_upgrade_detail.setText('Finish the interrupted startup update before changing the default.' if pending else
             'Update Boot to enable the Menu startup selector and default choices.' if upgrade else
             'This Boot version cannot save a default startup choice from Media Manager.')
-        if option is None:
-            self.install_button.setText('No startup change available')
+        if resume:
+            self.install_button.setText('Resume installation')
+        elif linnet and not from_source and not firmware:
+            self.install_button.setText('Choose firmware first')
+        elif option is None:
+            self.install_button.setText('Install firmware')
         elif not option.get('selectable'):
-            self.install_button.setText('Current startup software' if option.get('active') else
-                                        'Choose on iPod at startup' if option.get('chooser_available') else
-                                        'Startup change unavailable')
+            self.install_button.setText('Installation unavailable')
         else:
-            self.install_button.setText('Resume installation' if resume else
-                ('Reinstall ' if option.get('active') else 'Switch to ' if installed else 'Install ') +
-                ('Developer build' if option.get('build') == 'dev' else 'User build') if linnet else 'Set as default boot')
+            self.install_button.setText(('Build and update' if installed else 'Build and install') if from_source else
+                                        ('Update firmware' if installed else 'Install firmware') if linnet else 'Set as default boot')
+
+    def toggle_source_options(self, expanded):
+        self.source_options.setVisible(expanded)
+        self.source_options_button.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
 
     def toggle_setup_editor(self):
         if self.busy:
@@ -349,7 +385,7 @@ class SetupWorkspace:
         self.build_editor_open = not self.build_editor_open
         self.update_install_action()
         if self.build_editor_open:
-            self.reveal_setup_editor(self.boot_choice)
+            self.reveal_setup_editor(self.boot_choice if self.build_from_source.isChecked() else self.firmware_button)
 
     def reveal_setup_editor(self, widget):
         review = self.review
@@ -359,10 +395,19 @@ class SetupWorkspace:
         QTimer.singleShot(0, reveal)
 
     def install_selected(self):
+        self.update_install_action()
         if not self.device_connected or not self.install_button.isEnabled():
             return
         option, method, identity = self.boot_choice.currentData(), self.method_choice.currentData(), self.identity
-        description = (f"Install or update {option['label']}?" + f"\n\nMethod: {method['label']}"
+        selected_zip = getattr(self, '_firmware_preview', None)
+        resume = self.review.get('action') == 'resume'
+        from_source = self.build_from_source.isChecked() and not getattr(sys, 'frozen', False) and not resume
+        build_label = 'Developer firmware' if option.get('build') == 'dev' else 'User firmware'
+        description = ((f'Resume installing the saved {build_label.lower()}?' if resume else
+                        f"Install {build_label.lower()} on {self.device_title(identity)}?") +
+                       ('\n\nFirmware will be compiled from this source checkout.' if from_source else
+                        '\n\nFirmware ZIP: ' + Path(self.firmware_path).name if not resume else '') +
+                       ('\nStartup option: ' + method['label'] if self.method_choice.count() > 1 else '')
                        if option['kind'] == 'linnet' else
                        f"Make {option['label']} the default startup software?")
         if option['kind'] == 'linnet' and self.review.get('action') in ('replace', 'adopt'):
@@ -370,12 +415,21 @@ class SetupWorkspace:
                             'will be preserved. ' + ('The confirmed OS will be retained for rollback.'
                             if method['strategy'] == 'native-volume' else
                             'Superseded Linnet system files will be archived.'))
-        if not self.dialog('Update iPod setup', description + '\n\nKeep the iPod connected until the update finishes.', 'Apply to iPod'):
+        if not self.dialog('Resume installation' if resume else 'Install firmware',
+                           description + '\n\nKeep the iPod connected until installation finishes.',
+                           'Resume' if resume else 'Install'):
             return
-        from_source = self.build_from_source.isChecked()
+        if not from_source and not resume:
+            self.update_install_action()
+            if not self.install_button.isEnabled():
+                self.reveal_setup_editor(self.firmware_picker)
+                return
+            if getattr(self, '_firmware_preview', None) != selected_zip:
+                self.show_progress('The firmware file changed. Review the selection and install again.')
+                return
         firmware = None if from_source or not self.firmware_path else Path(self.firmware_path)
         if option['kind'] == 'linnet' and self.review.get('action') == 'resume':
-            from_source, firmware = option['build'] == 'dev', None
+            from_source, firmware = False, None
         operation = (lambda: installer.install(identity, progress=self.events.progress.emit,
             build=option['build'], installation_method=method['id'], firmware=firmware,
             from_source=from_source,instruction=self.events.setup_instruction.emit,
@@ -439,13 +493,16 @@ class SetupWorkspace:
         pending = self.boot_upgrade_pending
         option = self.boot_choice.currentData()
         build = (option or {}).get('build', self.review['linnet'].get('build', 'dev'))
-        from_source = self.build_from_source.isChecked()
+        from_source = self.build_from_source.isChecked() and not getattr(sys, 'frozen', False)
         firmware = None if from_source or not self.firmware_path else Path(self.firmware_path)
-        if not pending and not (from_source or firmware and build == 'user'):
+        selection, _error = self.selected_firmware()
+        if not from_source and selection:
+            build = selection['build']
+        if not pending and not (from_source or firmware and selection):
             self.build_editor_open = True
             self.update_install_action()
-            self.reveal_setup_editor(self.build_from_source if not getattr(sys, 'frozen', False) else self.firmware_button)
-            self.show_progress('Choose firmware below, then choose Update startup selector again.')
+            self.reveal_setup_editor(self.firmware_picker)
+            self.show_progress('Choose a firmware ZIP below, then try Update startup selector again.')
             return
         if not pending and not self.dialog('Update startup selector',
                 f'Update startup firmware on {self.device_title(identity)}? Linnet and the saved Apple software will remain available.\n\nKeep the iPod connected until the update finishes.',
@@ -506,13 +563,67 @@ class SetupWorkspace:
         self.show_progress(result['summary'])
 
     def choose_firmware(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Choose Linnet firmware', self.firmware_path,
-                                            'Linnet firmware (*.zip)')
+        initial = Path(self.firmware_path) if self.firmware_path else Path.home() / 'Downloads'
+        if not initial.exists():
+            initial = initial.parent if initial.parent.is_dir() else Path.home()
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose firmware ZIP', str(initial),
+                                            'Linnet firmware ZIP (*.zip)')
         if path:
             self.firmware_path = path
             self.settings.setValue('firmware_bundle', path)
             self.build_from_source.setChecked(False)
             self.update_install_action()
+
+    def selected_firmware(self):
+        selection = self.firmware_status()
+        return selection['firmware'], '' if selection['firmware'] else selection['detail']
+
+    def firmware_status(self):
+        def notice(title, detail, state='warning', action='Choose ZIP…', firmware=None):
+            return dict(title=title, detail=detail, state=state, action=action, firmware=firmware)
+        if not self.firmware_path:
+            return notice('No firmware selected',
+                'Choose a User or Developer firmware ZIP for this iPod. Keep the file zipped.', 'empty')
+        try:
+            from tools.content.host_state import file_stamp
+            from tools.studio.firmware_bundle import describe
+            path = Path(self.firmware_path)
+            if path.is_dir():
+                return notice('Select the ZIP file', 'Choose the downloaded firmware ZIP, rather than a folder or extracted files.')
+            stamp = (str(path), file_stamp(path.stat()))
+            cached = getattr(self, '_firmware_preview', None)
+            if cached is None or cached[0] != stamp:
+                info = describe(path)
+                if file_stamp(path.stat()) != stamp[1]:
+                    return notice('Firmware file changed', 'The ZIP changed while it was being checked. Select it again to continue.')
+                self._firmware_preview = (stamp, info)
+            info = self._firmware_preview[1]
+            if self.identity and info['target_id'] != self.identity['target_id']:
+                return notice('Firmware for a different iPod',
+                    'This ZIP is for ' + TARGETS[info['target_id']]['name'].replace('Linnet for ', '') +
+                    '. Choose firmware for the connected ' + TARGETS[self.identity['target_id']]['name'].replace('Linnet for ', '') + '.',
+                    action='Change ZIP…')
+            build_label = 'Developer firmware' if info['build'] == 'dev' else 'User firmware'
+            return notice(TARGETS[info['target_id']]['name'].replace('Linnet for ', '') + ' · ' + build_label,
+                'Version ' + info['version'] + ' · ' + ('Diagnostics and Linnet Link.' if info['build'] == 'dev' else 'For everyday use.'),
+                'ready', 'Change ZIP…', info)
+        except FileNotFoundError:
+            return notice('Selected ZIP not found',
+                'The file is no longer at its saved location. Locate it or choose a new download.', action='Locate ZIP…')
+        except PermissionError:
+            return notice('Firmware file cannot be opened', 'Choose a copy of the ZIP that you can open on this computer.')
+        except OSError:
+            return notice('Firmware file unavailable',
+                'The drive or folder containing this ZIP is unavailable. Reconnect it or choose another copy.')
+        except (ValueError, KeyError, TypeError) as error:
+            detail = str(error).lower()
+            if 'current linnet' in detail:
+                return notice('Choose a current firmware ZIP',
+                    'This ZIP does not contain the firmware details Linnet needs. Download a current User or Developer firmware ZIP.')
+            if 'checksum' in detail or 'invalid firmware bundle' in detail:
+                return notice('Firmware ZIP is damaged', 'Download the firmware again, then select the new copy.')
+            return notice('Firmware ZIP cannot be used',
+                'Choose an original Linnet firmware download. If this is the correct ZIP, try downloading it again.')
 
     def firmware_source_changed(self, enabled):
         self.settings.setValue('build_from_source', enabled)

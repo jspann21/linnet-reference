@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import stat
 import struct
+import sys
 import subprocess
 import tempfile
 import uuid
@@ -1351,7 +1352,9 @@ def update(identity, *, ffprobe=None, progress=lambda text: None, cancelled=lamb
                           progress=progress) if playable_music else [])
     video_tool = ffprobe or shutil.which('ffprobe')
     if videos and not video_tool:
-        raise ValueError('Choose FFprobe in Settings to check videos for Apple OS.')
+        raise ValueError('Video inspection could not start. ' +
+            ('Reinstall Linnet and try again.' if getattr(sys, 'frozen', False) else
+             'Choose FFprobe in Settings → Advanced preparation.'))
     video_rows, video_issues = _video_rows(identity, videos, video_tool,
                                          cancelled=cancelled, progress=progress)
     manifest.extend(video_rows)

@@ -3,6 +3,21 @@
 Use [Media Manager](media-manager.md) for supported installation. This map is for
 contributors working on the lower-level boot paths.
 
+The Photo fixed-layout device Boot writer is a separate source maintenance
+image. Ordinary User and Developer firmware retain the complete interface,
+Cover Flow cache and games; Media Manager's host installer and normal A/B OS
+updates do not need this writer. Build its dedicated configuration with:
+
+```powershell
+python linnet build --target photo4g-p98 --profile dev --kind os --native-maintenance --device-serial OBSERVED_USB_SERIAL --verify
+```
+
+The flag selects `config/photo-native-maintenance.toml`. This image is for the
+audited 64 GB Photo disk layout and original firmware hash accepted by the
+writer. Its existing disk, serial, backup and write checks still apply. The
+`device native-install` command checks for maintenance support before uploading
+anything. Maintenance images are not part of the User/Developer download set.
+
 | Stage | PortalPlayer targets | Classic S5L8702 |
 | --- | --- | --- |
 | Build | [Shared builder](../tools/studio/build.py) creates Boot/OS images. | Shared builder for ordinary images; [SRAM stage builder](../tools/studio/s5l_bootstrap.py) for initial bootstrap. |

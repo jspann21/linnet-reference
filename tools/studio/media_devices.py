@@ -324,16 +324,19 @@ class DeviceWorkspace:
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
         def inspect():
             result = media_reader.read('scan', identity=identity, photo_dimension=dimension,
-                                       verification=verification, cancelled=self.stop_event.is_set)
+                                       verification=verification, cancelled=self.stop_event.is_set,
+                                       progress=self.events.progress.emit)
             if not isinstance(result, dict):
-                for row in result[2]:
+                for index, row in enumerate(result[2]):
                     if self.stop_event.is_set():
                         raise media.Cancelled()
+                    if index % 256 == 0:
+                        self.events.progress.emit(f'Preparing collection search · {index + 1:,} of {len(result[2]):,} items')
                     if row['category'] in ('original', 'published'):
                         row['_linnet_search_text'] = library_search_text(row)
             return result
         self.work('scan', inspect,
-                  'Reading your collection and checking prepared media…')
+                  'Starting collection scan…')
 
     @staticmethod
     def same_device(first, second):

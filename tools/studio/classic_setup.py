@@ -140,10 +140,10 @@ def prepare(identity, *, firmware=None, from_source=False, build='user', progres
         progress('Building Linnet for the connected Classic…')
         artifacts=installer.build_artifacts(identity,progress,build,'native-preserve',boot_profile='release')
     else:
-        if firmware is None or build!='user':raise ValueError('Choose a User firmware ZIP or build from source')
+        if firmware is None:raise ValueError('Choose a Linnet firmware ZIP or build from source')
         from tools.studio.firmware_bundle import load
         progress('Checking the selected Classic firmware ZIP…')
-        artifacts=load(firmware,identity,'native-preserve')
+        artifacts=load(firmware,identity,'native-preserve',build=build)
     persisted=installer._persist_artifacts(artifacts,directory)
     bootstrap=directory/'bootstrap'
     from tools.studio import s5l_bootstrap
@@ -350,7 +350,8 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                 games.save(native,games.read(native),library=artifacts['game_library'])
             existing=installer.installed_state(native['root'],TARGET)
             if existing['state']=='installed':
-                if existing.get('build_id')!=artifacts['os_build_id'] or existing.get('candidate_pending'):
+                if (existing.get('build_id')!=artifacts['os_build_id'] or existing.get('candidate_pending') or
+                        existing.get('image_sha256')!=installer.inspect_image(Path(artifacts['os_image']).read_bytes())['sha256']):
                     raise ValueError('The installed OS differs from this saved Classic setup; inspect it before continuing')
                 result=dict(passed=True,initial_installation=True,requires_safe_eject=True)
             else:

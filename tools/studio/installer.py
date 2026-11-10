@@ -305,7 +305,7 @@ def _resume_context(identity, linnet, *, initialized=True):
             if any(not Path(artifacts[name]).is_file() for name in ("os_image", "boot_image", "boot_wrapper")):
                 continue
             manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-            if manifest.get("image", {}).get("build_id") != artifacts["os_build_id"]:
+            if manifest.get("image") != inspect_image(Path(artifacts['os_image']).read_bytes()):
                 continue
             matches = True
             for name in CORE_FILES:
@@ -835,6 +835,9 @@ def _validate_artifacts(identity, artifacts):
             exclusion = report.get("release_exclusion")
             if not isinstance(exclusion, dict) or exclusion.get("passed") is not True:
                 raise ValueError("user installer artifacts require release exclusion verification")
+        elif 'serial_binding' in report:
+            from tools.studio.firmware_binding import validate_binding
+            validate_binding(os_data if kind == 'os' else boot_data, report, expected_serial)
 
 
 def _same_device(expected, observed):
@@ -926,7 +929,7 @@ def _package_storage(identity, artifacts, transaction, archive=None):
     package = transaction / "storage"
     if package.exists():
         manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-        if manifest.get("image", {}).get("build_id") != artifacts["os_build_id"]:
+        if manifest.get("image") != inspect_image(Path(artifacts['os_image']).read_bytes()):
             raise ValueError("saved storage transaction belongs to another build")
     else:
         storage.prepare(Path(artifacts["os_image"]), package)
@@ -1208,7 +1211,7 @@ def _restore_reinstall_data(root, archive):
                 retained_system=sorted(item.name for item in archive.iterdir()))
 
 
-def install(identity, progress=lambda _message: None, build="user", installation_method=None,
+def install(identity, progress=lambda _message: None, build=None, installation_method=None,
             firmware=None, from_source=False, instruction=lambda _event: None, cancelled=lambda:False):
     """Keep file-bootloader transactions in the caller's publisher exclusion.
 
@@ -1217,6 +1220,9 @@ def install(identity, progress=lambda _message: None, build="user", installation
     """
     from tools.content.publish import _exclusive
     reviewed = assess(identity)
+    from tools.studio.firmware_bundle import selected_build
+    build = ((reviewed.get('resume') or reviewed.get('classic_setup') or {}).get('build') if build is None and reviewed['action'] == 'resume'
+             else selected_build(firmware, build))
     method_id = installation_method or reviewed["default_installation_method"]
     method = next((item for item in reviewed["installation_methods"]
                    if item["id"] == method_id), None)
@@ -1238,8 +1244,6 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
         raise ValueError("installer build must be user or dev")
     if from_source and firmware is not None:
         raise ValueError("choose a firmware bundle or build from source")
-    if build == "dev" and not from_source:
-        raise ValueError("developer firmware requires Build from source")
     reviewed = assess(identity)
     if reviewed["action"] not in ("install", "resume", "replace", "adopt"):
         raise ValueError(reviewed["summary"])
@@ -1278,7 +1282,7 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
                 raise ValueError("Choose a prebuilt Linnet firmware ZIP before installing.")
             from tools.studio.firmware_bundle import load
             progress("Verifying the selected firmware bundle…")
-            artifacts=load(firmware, reviewed["identity"], method_id)
+            artifacts=load(firmware, reviewed["identity"], method_id, build=build)
             image = Path(artifacts["os_image"])
             game_library=artifacts.get('game_library')
         if game_library:
@@ -1314,7 +1318,7 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
                 raise ValueError("Choose a prebuilt Linnet firmware ZIP before installing.")
             from tools.studio.firmware_bundle import load
             progress("Verifying the selected firmware bundle…")
-            artifacts = load(firmware, identity, method_id)
+            artifacts = load(firmware, identity, method_id, build=build)
         transaction = _transaction(identity, artifacts)
     transaction.mkdir(parents=True, exist_ok=True)
     if reviewed["action"] != "resume":
@@ -1892,6 +1896,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
     from tools.content.guard import guarded_path, guard_volume
     from tools.content.publish import _exclusive
 
+    progress("Checking the iPod and its saved startup recovery record…")
     identity = _uninstall_identity(identity, progress)
     pending = _pending_uninstall(identity, Path(identity["root"]).resolve(strict=True))
     if pending:
@@ -1916,6 +1921,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
     def fail_walk(error):
         raise error
 
+    progress("Checking Linnet system files before removal…")
     for base, directories, files in os.walk(private, followlinks=False, onerror=fail_walk):
         for name in directories + files:
             path = Path(base) / name
@@ -1964,6 +1970,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
             guarded_path(recovery, root)
             if not recovery.is_dir():
                 raise ValueError("the Linnet recovery directory disappeared after startup restoration")
+            progress("Saving and verifying the startup recovery backup on this computer…")
             recovery_backup = receipt_path.with_suffix(".recovery")
             shutil.copytree(recovery, recovery_backup, copy_function=shutil.copyfile)
             from tools.content.guard import hash_file
@@ -1982,6 +1989,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
             try:
                 for child in private.iterdir():
                     if child.name.upper() != "RECOVERY":
+                        progress("Removing Linnet system files: " + child.name)
                         guard_volume(reviewed["identity"])
                         guarded_path(child, root)
                         if child.is_dir():
@@ -2042,7 +2050,7 @@ def main():
         command = commands.add_parser(name)
         command.add_argument("--mount", type=Path, required=True)
         if name in ("install", "upgrade-boot"):
-            command.add_argument("--build", choices=("user", "dev"), default="user")
+            command.add_argument("--build", choices=("user", "dev"), help="Source build type; ZIPs identify their build automatically")
             if name == "install":
                 command.add_argument("--method", choices=tuple(INSTALLATION_METHODS),
                                      help="default: native for fresh installs, saved method for reinstall/resume")

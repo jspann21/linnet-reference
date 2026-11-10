@@ -21,7 +21,7 @@ performance work, and future features. Priorities are not release dates.
   [Controls](navigation.md#saved-customization).
 
 - [ ] **Clean-machine packaging check.** Run the packaged Windows app on a
-  clean computer with the documented FFmpeg setup.
+  clean computer using the included conversion tools.
   [Windows distribution](../tools/studio/media_distribution.py).
 
 - [ ] **First downloadable release.** Publish accepted Windows and firmware ZIPs

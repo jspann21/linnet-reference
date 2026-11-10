@@ -90,6 +90,8 @@ def create(output, installer_output=None):
             library.unlink()
         from tools.studio.apple_tools import distribution
         distribution(work / "dist/Linnet Media/_internal/apple-tools")
+        from tools.studio.conversion_tools import distribution as conversion_distribution
+        conversion_distribution(work / 'dist/Linnet Media/_internal/conversion-tools')
         from tools.content.aac_index import executable as aac_executable
         shutil.copy2(aac_executable(), work / 'dist/Linnet Media/_internal/aac-index.exe')
         from tools.content.mp3_index import executable as mp3_executable

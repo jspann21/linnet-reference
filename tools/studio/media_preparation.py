@@ -1,5 +1,6 @@
 """Preparation plans, source queues, and publication results."""
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QItemSelection, QItemSelectionModel, QSignalBlocker, QTimer, QUrl, Qt
@@ -686,7 +687,9 @@ class PreparationWorkspace:
                 ffprobe=ffprobe, ffmpeg=ffmpeg, convert_audio=convert_audio,
                 cancelled=self.stop_event.is_set)
             if result['conversion'] and (not ffmpeg or not ffprobe):
-                raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
+                raise ValueError('Video preparation could not start. ' +
+                    ('Reinstall Linnet and try again.' if getattr(sys, 'frozen', False) else
+                     'Choose FFmpeg and FFprobe in Settings → Advanced preparation.'))
             return result
         self.work('plan', inspect_plan, 'Checking the preparation plan…')
 

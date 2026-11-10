@@ -9,6 +9,7 @@ from PySide6.QtGui import QFont, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QBoxLayout,
     QDialog,
     QFrame,
     QHeaderView,
@@ -201,12 +202,15 @@ class MediaWindow(
         self.preferences = build_settings_page(self); self.stack.addWidget(self.preferences)
         activity = QFrame(); activity.setObjectName('activity'); foot = box(activity, margins=(28, 10, 28, 12), spacing=7)
         self.progress = QProgressBar(); self.progress.setTextVisible(False); self.progress.hide(); foot.addWidget(self.progress)
-        status_row = box(horizontal=True, spacing=12)
-        self.status = StatusLabel('Looking for your iPod…'); status_row.addWidget(self.status, 1)
-        self.cancel_button = button('Stop', self.stop, 'quiet'); self.cancel_button.setToolTip('Stop after the current step finishes'); self.cancel_button.hide(); status_row.addWidget(self.cancel_button)
-        self.refresh_button = button('Refresh', self.refresh, 'quiet', 'refresh'); status_row.addWidget(self.refresh_button)
-        self.diagnostics_button = button('Diagnostics', self.show_diagnostics, 'quiet'); status_row.addWidget(self.diagnostics_button)
-        foot.addLayout(status_row); body.addWidget(activity)
+        self.status_row = box(horizontal=True, spacing=12)
+        self._activity_message = 'Looking for your iPod…'
+        self.status = StatusLabel(self._activity_message); self.status_row.addWidget(self.status, 1)
+        self.status_actions = QWidget(); actions = box(self.status_actions, horizontal=True, spacing=12)
+        self.cancel_button = button('Stop', self.stop, 'quiet'); self.cancel_button.setToolTip('Stop after the current step finishes'); self.cancel_button.hide(); actions.addWidget(self.cancel_button)
+        self.refresh_button = button('Refresh', self.refresh, 'quiet', 'refresh'); actions.addWidget(self.refresh_button)
+        self.diagnostics_button = button('Diagnostics', self.show_diagnostics, 'quiet'); actions.addWidget(self.diagnostics_button)
+        self.status_row.addWidget(self.status_actions)
+        foot.addLayout(self.status_row); body.addWidget(activity)
         main.addWidget(right, 1)
         QShortcut(QKeySequence.Find, self, activated=self.focus_search)
         QShortcut(QKeySequence.Refresh, self, activated=self.refresh)
@@ -258,6 +262,7 @@ class MediaWindow(
             self.stack.setCurrentWidget(self.preferences)
             self.refresh_cache()
         self.update_controls()
+        self.render_activity_status()
         # Link setup leaves the collection unread. Setup and Trash have their
         # own readers; returning to removal must not wait for a media scan.
         if (self.cache_library_dirty and page not in ('Settings', 'iPod setup', 'Trash') and self.identity and
@@ -352,7 +357,17 @@ class MediaWindow(
 
     @Slot(str)
     def show_progress(self, text):
-        self.status.set_message(text)
+        self._activity_message = text
+        self.render_activity_status()
+
+    def render_activity_status(self):
+        expanded = bool(self.page == 'iPod setup' and self.busy and self.active_operation
+                        and self.active_operation.tag == 'scan')
+        self.status_row.setDirection(QBoxLayout.TopToBottom if expanded else QBoxLayout.LeftToRight)
+        self.status_row.setAlignment(self.status_actions, Qt.AlignRight | Qt.AlignVCenter)
+        self.status.setWordWrap(expanded)
+        self.status.set_message(self._activity_message +
+            ('\nLarge collections take longer, especially on the first read.' if expanded else ''))
 
     @Slot(object)
     def show_operation_stage(self, event):
@@ -369,7 +384,7 @@ class MediaWindow(
         self.cancel_button.setText('Stop' if can_stop else 'Finishing current step')
         self.cancel_button.setToolTip('Stop after the current step finishes' if can_stop else
                                       'The current guarded write or cleanup must finish.')
-        self.status.set_message(event['name'])
+        self.show_progress(event['name'])
 
     @Slot(object)
     def show_conversion_progress(self, event):
@@ -388,7 +403,8 @@ class MediaWindow(
             parts.append(f"Video {event['video_index']}/{event['video_total']}")
         if event.get('name'):
             parts.append(event['name'])
-        self.status.set_message(' · '.join(parts), event['message'])
+        self.show_progress(' · '.join(parts))
+        self.status.setToolTip(event['message'])
 
     @Slot(object)
     def completed(self, outcome):
@@ -400,6 +416,7 @@ class MediaWindow(
         if tag in ('classic_install', 'uninstall'):
             self.close_setup_instruction()
         self.busy = False
+        self.render_activity_status()
         self.progress.hide()
         self.cancel_button.hide()
         self.update_controls()
@@ -601,12 +618,15 @@ class MediaWindow(
                     setattr(self, setting, value)
         if result['errors']:
             self.record_diagnostic('tools', 'ToolCheckError', '; '.join(result['errors']), 'failed')
+            if self.tools_label is None:
+                return
             available = (('FFprobe is ready. ' if self.verified_ffprobe else '') +
                          ('FFmpeg is ready. ' if self.verified_ffmpeg else ''))
             self.tools_label.setText(available + ' '.join(result['errors']) +
                 ' Choose a folder containing the missing tool.')
             return
-        self.tools_label.setText('FFmpeg and FFprobe are ready.')
+        if self.tools_label is not None:
+            self.tools_label.setText('FFmpeg and FFprobe are ready.')
 
     def stop(self):
         context = self.active_operation

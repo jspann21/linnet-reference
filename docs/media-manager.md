@@ -7,9 +7,9 @@ Use **LinnetSetup.exe** for the standard Windows installation, then open
 **Linnet** from the Start menu. The optional portable ZIP runs after extraction.
 See [builds and downloads](releases.md) for installation and desktop removal.
 
-The packaged app includes Python and the native Apple database helpers.
-Prebuilt firmware installation needs no compiler or WSL. Media conversion
-requires FFmpeg and FFprobe; select their folder in **Settings**.
+The packaged app includes everything needed for media preparation. Prebuilt
+firmware installation needs no compiler or WSL. No extra setup is needed for
+audio and video conversion.
 
 ## Will this iPod work?
 
@@ -49,30 +49,30 @@ Screenshots capture the iPod's native screen pixels. They require a running OS
 with Linnet Link; the button is disabled in Disk Mode, recovery, and User builds.
 The image remains available in the preview if the iPod disconnects.
 
-## Set up FFmpeg on Windows
+## Audio and video preparation
 
-1. Obtain a Windows FFmpeg build and extract it to a folder you can keep. Find
-   `ffmpeg.exe` and `ffprobe.exe` together, usually in its `bin` folder.
-2. In Media Manager, open **Settings → Choose FFmpeg folder** and select the
-   folder containing both executables. The app runs each tool's `-version`
-   check and shows **FFmpeg and FFprobe are ready** when both pass.
-3. Return to **Preparation** and review the video plan. Video conversion needs
-   both tools; checking videos for Apple OS needs FFprobe. Some music metadata
-   and FLAC preparation also use FFprobe.
+The installer and portable app include FFmpeg and FFprobe and use them
+automatically. There is no setup step in Settings. If preparation reports that
+its components cannot start, reinstall Linnet or extract a fresh portable ZIP.
 
-Media Manager checks for both commands on `PATH` when it starts, but choosing
-their folder records exact paths. If the check fails, confirm that you selected
-the folder containing both `.exe` files and that each runs from PowerShell:
+FFmpeg converts video and unsupported audio on the computer before the prepared
+files are copied to the iPod. FFprobe checks codecs, duration and compatibility;
+some music metadata and FLAC preparation also use it.
 
-```powershell
-& 'C:\path\to\ffmpeg\bin\ffmpeg.exe' -version
-& 'C:\path\to\ffmpeg\bin\ffprobe.exe' -version
-```
+When running Media Manager **from source**, supply your own Windows FFmpeg build
+with `ffmpeg.exe` and `ffprobe.exe` together, usually in its `bin` folder. Commands
+on `PATH` are detected automatically, or choose **Settings → Advanced preparation →
+FFmpeg (source builds) → Choose folder…**. Both executables must pass their startup check. CLI conversion
+commands also accept explicit `--ffmpeg` and `--ffprobe` paths.
 
-Replace the example path with your extracted folder. The status in Settings
-reports which tool could not run. Choose the folder again after moving or
-replacing the tools. FFprobe-only inspection can run when FFprobe passes its
-check, but video conversion remains unavailable until both tools pass.
+Windows packaging builds pinned FFmpeg and x264 sources using the project’s LLVM
+toolchain, Git for Windows, NASM and pkgconf. Run `python linnet setup`, then
+`python -m tools.studio.conversion_tools` to build the tools independently.
+Packaging includes both executables, their license notices, complete matching
+source archives, dependency checksums and the build script under
+`_internal/conversion-tools`. The conversion executables can be replaced with
+compatible modified versions. The build enables GPLv3 and libx264, excludes
+nonfree components, and does not patch either project's source.
 
 ## Install or restore firmware
 
@@ -82,15 +82,23 @@ check, but video conversion remains unavailable until both tools pass.
    device and setup status first. If an installation prerequisite is missing,
    the page explains it before offering firmware or build choices.
 3. When installation is available, choose **Choose firmware ZIP** and select the
-   whole ZIP **without extracting it**. Media Manager selects the required files.
-   Source checkouts also offer a development build option.
-4. Choose a build (**User build** for everyday use) and a startup method when
-   there is a choice, then install. A fresh Classic finishes connected in Linnet
+   whole ZIP **without extracting it**. Choose `-user.zip` for everyday use or
+   `-dev.zip` for diagnostics and Linnet Link. Media Manager displays the verified
+   iPod model, build type, and version from the ZIP automatically.
+4. Choose a startup method when there is a choice, then install. A fresh Classic finishes connected in Linnet
    Disk Mode: open **Preparation** to add media or **Eject safely** to start Linnet.
    For other installation routes, eject safely to start Linnet, then enter Linnet
    Disk Mode and reconnect before preparing media. Existing
    installations also show default startup and removal options below the
    installation controls.
+
+**Advanced source options** is for development on a configured Linnet source
+checkout. Enable **Build from this source checkout**, then choose User or
+Developer. This compiles firmware on the computer and requires the configured
+compiler. The installed app explains why this option is unavailable; both User
+and Developer ZIPs work there without Python or a compiler. Returning to ZIP
+mode restores the build type recorded in the selected ZIP. Interrupted installs
+resume using their saved firmware and build type.
 
 On a supported native Boot installation, **Default startup** chooses which
 installed system starts automatically. Hold **MENU** while the iPod starts to
@@ -140,8 +148,8 @@ the verified saved default in **Start automatically**, with **Save** beside it,
 and explains holding Menu for a one-time startup choice. The **Linnet** card shows
 the installed build. Choose **Change build or reinstall…** to open its build and
 firmware controls; first installations and interrupted setups open these controls
-automatically. Choose a matching firmware ZIP for User firmware or build from
-source; Developer firmware requires a source checkout. Pending updates show which
+automatically. Choose a matching User or Developer firmware ZIP, or compile from a configured
+source checkout using Advanced source options. Pending updates show which
 build is ready to start and ask you to eject safely. Media is kept.
 
 Linnet Link then checks RAM, panel initialization, disk identity and partition
@@ -200,8 +208,10 @@ Media Manager reconnects the same board through Linnet Link and checks its FAT
 volume and disk geometry again before restoring startup software. A failed
 removal clears the old connection; choose **Find iPod** to review it again.
 Photo, monochrome, and Video iPods can restore through Linnet's native Disk Mode
-when the verified original installation record matches. Otherwise, reconnect in
-Apple Disk Mode so the saved backup can be matched to the original storage identity.
+when the verified original installation or completed startup upgrade record matches.
+Otherwise, reconnect in Apple Disk Mode so the saved backup can be matched to
+the original storage identity. Removal reports recovery checks, startup
+restoration, backup verification, and system-file cleanup in the activity area.
 
 Classic A1238/N25 installations use a separate NOR flash bootloader. Media
 Manager recognizes their completed bootstrap records and verified original NOR
@@ -215,10 +225,11 @@ verifies the complete NOR, and restarts into Apple software before removing
 Linnet files. Restoration, reconnection, and cleanup run in the same removal
 operation; keep USB connected through the restarts. Media Manager allows three
 minutes for a fresh, verified Apple disk mount and continues cleanup
-automatically. The normal USB disk connection while Apple iPod software is running
-is sufficient; the button sequence for recovery Disk Mode is only a fallback if
-the disk does not appear. If Windows has not mounted it, a dialog guides
-reconnection and that fallback: turn Hold off, hold Menu + Select until the
+automatically. Starting in Apple iPod software is expected. Its USB disk must also
+mount in Windows before Linnet’s files can be removed. The normal USB disk
+connection while Apple iPod software is running is sufficient; the button sequence
+for recovery Disk Mode is only a fallback if the disk does not appear. If Windows
+has not mounted it, a dialog guides reconnection and that fallback: turn Hold off, hold Menu + Select until the
 Apple logo appears, then immediately hold Select + Play/Pause until Disk Mode
 appears. A verified restoration is not repeated when only file cleanup remains.
 If the wait expires, reconnect this same iPod's Apple USB disk, choose **Find
