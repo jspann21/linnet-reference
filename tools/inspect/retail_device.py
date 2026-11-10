@@ -46,18 +46,24 @@ model=$w.Model;pnp_id=$w.PNPDeviceID;bus_type=$bus;sector_bytes=$d.LogicalSector
 partition_offset=[long]$p.Offset;partition_bytes=[long]$p.Size;drive='{letter}:';
 volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | ConvertTo-Json -Compress
 """
-    try:
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                                text=True, encoding="utf-8", capture_output=True, timeout=15, check=True,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            "Windows did not finish inspecting the mounted iPod. "
-            "Wait a few seconds, then choose Find iPod to try again."
-        ) from error
-    except subprocess.CalledProcessError as error:
-        detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
-        raise RuntimeError("Could not inspect the mounted iPod: " + detail) from error
+    for attempt in range(2):
+        try:
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                    text=True, encoding="utf-8", capture_output=True, timeout=15, check=True,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            break
+        except subprocess.TimeoutExpired as error:
+            if not attempt:
+                # Re-read the same mount; successful results must still pass
+                # the USB, storage and cross-probe identity checks.
+                continue
+            raise RuntimeError(
+                "Windows did not finish inspecting the mounted iPod after two attempts. "
+                "Wait a few seconds, then choose Find iPod to try again."
+            ) from error
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
+            raise RuntimeError("Could not inspect the mounted iPod: " + detail) from error
     storage = json.loads(result.stdout)
     from .windows_pnp import usb_parent
     storage["usb_pnp_id"] = usb_parent(storage["pnp_id"])
