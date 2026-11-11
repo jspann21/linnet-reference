@@ -2,7 +2,7 @@
 #define LINNET_GAME_SAVES_H
 #include "sdk/include/linnet/game.h"
 #define LN_GAME_SAVE_FILE_BYTES (LN_GAME_CATALOGUE_MAX*4096u)
-void ln_game_save_begin(const char *id,uint32_t slot,uint32_t schema,uint32_t legacy_best);
+void ln_game_save_begin(const char *id,uint32_t slot,uint32_t schema,uint32_t builtin_best);
 bool ln_game_save_ready(void);
 void ln_game_save_step(bool may_write);
 bool ln_game_save_busy(void);

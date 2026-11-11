@@ -149,7 +149,7 @@ Host-prepared packed artwork includes a separate index checksum. M25 validates
 that index in bounded steps and can decode visible covers from a completed
 prefix while the remaining artwork warms. Each early cover still passes
 its own checksum; complete payload and index validation precede publication of
-the resident set. Older artwork retains its compatible preparation path.
+the resident set.
 Packed blocks within one resident bank decode directly from that bank; blocks
 crossing a bank boundary use the existing input scratch buffer.
 When decoded RGB storage is available, M25 retains ten covers, using three

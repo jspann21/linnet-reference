@@ -1,7 +1,5 @@
 """Guarded selection of firmware games on capable targets."""
 from pathlib import Path
-import struct
-import zlib
 
 from . import media_manager as media
 from .publish import _plain
@@ -27,22 +25,10 @@ GAMES = (("Comet Run", "Steer through a rising meteor storm."),
          ("Pocket Pinball", "Tilt the table and kick the ball through targets."))
 
 
-def encode(selected):
+def validate_selection(selected):
     if not isinstance(selected, (set, list, tuple)) or any(type(i) is not int or not 0 <= i < len(GAMES) for i in selected):
         raise ValueError("Select known games only.")
-    mask = sum(1 << i for i in set(selected))
-    header = b'GAME' + bytes((4, mask & 255, (mask >> 8) & 255, (mask >> 16) & 255))
-    return header + struct.pack('<I', zlib.crc32(header))
-
-
-def decode(data, identity=None):
-    if (len(data) != 12 or data[:4] != b'GAME' or data[4] != 4
-            or data[7] & ~((1 << max(0, len(GAMES) - 16)) - 1)
-            or struct.unpack_from('<I', data, 8)[0] != zlib.crc32(data[:8])):
-        raise ValueError("Game selection is damaged. Save a new selection to replace it.")
-    mask = data[5] | (data[6] << 8) | (data[7] << 16)
-    selected = {i for i in range(len(GAMES)) if mask & (1 << i)}
-    return selected
+    return set(selected)
 
 
 def available(identity):
@@ -55,29 +41,25 @@ def supported(identity):
     return set(range(count)) if spec['capabilities'].get('games', False) else set()
 
 
-def _path(identity):
+def _root(identity):
     if not available(identity):
         raise ValueError("Games are unavailable on this iPod.")
     root = Path(identity['root'])
-    path = root / '.LINNET' / 'GAMES.BIN'
+    path = root / '.LINNET'
     _plain(path, root)
-    if not path.parent.is_dir():
+    if not path.is_dir():
         raise ValueError("Install Linnet on this iPod first.")
-    return root, path
+    return root
 
 
 def read(identity):
     identity = media.refresh(identity)
-    _, path = _path(identity)
+    root = _root(identity)
     from .game_install import inventory
-    snapshot=inventory(Path(identity['root']),identity['target_id'])
+    snapshot=inventory(root,identity['target_id'])
     if snapshot['valid']:
-        return {r['legacy'] for r in snapshot['rows'] if r['legacy']!=0xffffffff}
-    selected = set(range(len(GAMES)))
-    if path.exists():
-        with path.open('rb') as reader:
-            selected = decode(reader.read(13), identity)
-    return selected & supported(identity)
+        return {r['builtin'] for r in snapshot['rows'] if r['builtin']!=0xffffffff}
+    return supported(identity)
 
 
 def prepared(target, directory=None):
@@ -92,32 +74,32 @@ def prepared(target, directory=None):
 def custom(identity):
     identity=media.refresh(identity)
     from .game_install import inventory
-    return [r for r in inventory(identity['root'],identity['target_id'])['rows'] if r['legacy']==0xffffffff]
+    return [r for r in inventory(identity['root'],identity['target_id'])['rows'] if r['builtin']==0xffffffff]
 
 
 def choices(identity):
     identity=media.refresh(identity)
     from .game_install import inventory
     snapshot=inventory(identity['root'],identity['target_id'])
-    return dict(selected={r['legacy'] for r in snapshot['rows'] if r['legacy']!=0xffffffff} if snapshot['valid'] else read(identity),
-                custom=[r for r in snapshot['rows'] if r['legacy']==0xffffffff])
+    return dict(selected={r['builtin'] for r in snapshot['rows'] if r['builtin']!=0xffffffff} if snapshot['valid'] else read(identity),
+                custom=[r for r in snapshot['rows'] if r['builtin']==0xffffffff])
 
 
 def save(identity, selected, library=None, recover=False):
-    encode(selected)  # Preserve strict legacy selection validation during migration.
+    validate_selection(selected)
     if set(selected) - supported(identity):
         raise ValueError("This game is unavailable on this iPod.")
     identity = media.refresh(identity)
     from . import game_install,game_package
     if recover:game_install.recover_catalogues(identity)
-    root,_=_path(identity)
+    root=_root(identity)
     available=prepared(identity['target_id'],library) if selected else {}
-    if any('linnet.'+game_package.LEGACY_IDS[i] not in available for i in selected):
+    if any('linnet.'+game_package.BUILTIN_IDS[i] not in available for i in selected):
         raise ValueError('The prepared library is missing a selected built-in game')
-    packages=[available['linnet.'+game_package.LEGACY_IDS[i]] for i in sorted(set(selected))]
+    packages=[available['linnet.'+game_package.BUILTIN_IDS[i]] for i in sorted(set(selected))]
     # Changing built-in choices must preserve independently installed games.
     snapshot=game_install.inventory(root,identity['target_id'])
-    packages.extend(root/'.LINNET/GAMES'/r['filename'] for r in snapshot['rows'] if r['legacy']==0xffffffff)
+    packages.extend(root/'.LINNET/GAMES'/r['filename'] for r in snapshot['rows'] if r['builtin']==0xffffffff)
     game_install.install(identity,packages,expected=snapshot['tokens'])
     return set(selected)
 

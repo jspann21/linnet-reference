@@ -16,7 +16,7 @@ enum { CAT_OPEN,CAT_OPEN_WAIT,CAT_READ,CAT_READ_WAIT,CAT_VALIDATE,CAT_COPY,CAT_N
        LOAD_VERIFY,LOAD_ZERO,LOAD_SAVE,LOAD_ENTRY,ACTIVE,STOPPING,FAILED };
 static uint32_t phase,cat_copy,cat_length,cat_generation,cat_count,cat_row,cat_bytes;
 static uint32_t selected,offset,chunk,crc,file_crc,io_generation=0x474d0000u,requested=UINT32_MAX;
-static uint32_t revision,paused_at,paused_us,zero_at,legacy_best[LN_GAME_COUNT];
+static uint32_t revision,paused_at,paused_us,zero_at,builtin_best[LN_GAME_COUNT];
 static bool pending,ready,conflict,reentrant,held,save_can_write,exit_requested;
 static bool background_music;
 static uint8_t catalogue[LN_GAME_CATALOGUE_BYTES] __attribute__((aligned(32)));
@@ -39,12 +39,12 @@ static uint32_t update_crc(uint32_t value,const uint8_t *data,uint32_t bytes){
 }
 static uint32_t game_time(void){return (held?paused_at:ln_time_us())-paused_us;}
 static uint32_t best(void){uint32_t value=ln_game_save_best();
-    return header.legacy<LN_GAME_COUNT&&legacy_best[header.legacy]>value?legacy_best[header.legacy]:value;}
+    return header.builtin<LN_GAME_COUNT&&builtin_best[header.builtin]>value?builtin_best[header.builtin]:value;}
 static bool record(uint32_t value){
     bool accepted=ln_game_save_record(value);
-    if(header.legacy<LN_GAME_COUNT){uint16_t score=(uint16_t)(value>65535u?65535u:value);
-        if(score>legacy_best[header.legacy]){legacy_best[header.legacy]=score;ln_display_game_best_set(header.legacy,score);}
-        return true; /* The existing THMS owner also persists legacy best scores. */
+    if(header.builtin<LN_GAME_COUNT){uint16_t score=(uint16_t)(value>65535u?65535u:value);
+        if(score>builtin_best[header.builtin]){builtin_best[header.builtin]=score;ln_display_game_best_set(header.builtin,score);}
+        return true; /* The existing THMS owner also persists builtin best scores. */
     }return accepted;
 }
 static bool title(uint32_t index,char *out,uint32_t capacity){
@@ -74,8 +74,7 @@ static int poll(bool opened){
 uint32_t ln_games_count(void){return ready&&phase>=IDLE&&!conflict?cat_count:0;}
 const char *ln_games_label(uint32_t index){return index<ln_games_count()?(const char *)row(index)+64u:0;}
 const char *ln_games_description(uint32_t index){return index<ln_games_count()?(const char *)row(index)+104u:notice;}
-void ln_games_configure(uint32_t mask){(void)mask; /* Catalogue, not legacy mask, owns installation. */}
-void ln_games_best_set(uint32_t index,uint16_t score){if(index<LN_GAME_COUNT&&score>legacy_best[index])legacy_best[index]=score;}
+void ln_games_best_set(uint32_t index,uint16_t score){if(index<LN_GAME_COUNT&&score>builtin_best[index])builtin_best[index]=score;}
 uint32_t ln_games_hud_revision(void){return revision+(phase==ACTIVE?active.revision():0);}
 bool ln_games_playing(void){return phase==ACTIVE&&!held&&active.playing();}
 const char *ln_games_text(const char *key){
@@ -185,7 +184,7 @@ void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write){
         result=poll(false);if(!result)break;
         if(result<0||!ln_game_header_decode(header_data,LINNET_TARGET_NUMBER,(uint32_t)(uintptr_t)memory(),&header)||
            source.size!=header.payload+256u||!same(header.id,(const char *)row(selected))||
-           header.legacy!=ln_read_le32(row(selected)+208u)||header.capabilities!=ln_read_le32(row(selected)+212u)){
+           header.builtin!=ln_read_le32(row(selected)+208u)||header.capabilities!=ln_read_le32(row(selected)+212u)){
             fail("Incompatible game package");break;}
         crc=~0u;file_crc=update_crc(~0u,header_data,256u);offset=0;ln_sha256_init(&hash);phase=LOAD_DATA;break;
     case LOAD_DATA:
@@ -202,7 +201,7 @@ void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write){
         chunk=header.bss-zero_at;if(chunk>1024u)chunk=1024u;
         for(uint32_t i=0;i<chunk;++i)memory()[header.payload+zero_at+i]=0;zero_at+=chunk;
         if(zero_at==header.bss){ln_game_save_begin(header.id,ln_read_le32(row(selected)+216u),header.schema,
-            header.legacy<LN_GAME_COUNT?legacy_best[header.legacy]:0);phase=LOAD_SAVE;}break;
+            header.builtin<LN_GAME_COUNT?builtin_best[header.builtin]:0);phase=LOAD_SAVE;}break;
     case LOAD_SAVE:if(ln_game_save_ready())phase=LOAD_ENTRY;break;
     case LOAD_ENTRY:{
         if(!ln_core_code_publish(memory(),header.payload+header.bss)){fail("Game cache publication failed");break;}

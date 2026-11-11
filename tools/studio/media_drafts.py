@@ -84,7 +84,7 @@ class DraftWorkspace:
                 self.screen_dirty = self.screen_state != self.screen_saved
             elif section == 'games' and isinstance(draft.get('games'), list):
                 chosen = draft['games']
-                games.encode(chosen)
+                games.validate_selection(chosen)
                 for index, check in enumerate(self.game_checks):
                     with QSignalBlocker(check):
                         check.setChecked(index in chosen)

@@ -242,8 +242,8 @@ Edit Menus remain reachable in Settings.
 Menu item IDs are stable. The 80-byte version-three menu envelope is shared by
 both editors and saved in the version-six `THMS` payload in the existing A/B
 theme records, together with brightness, theme selection, and game scores.
-`MENUS.BIN` remains the startup fallback for installations without saved shared
-menus. See [binary contracts](formats.md) for the format owners.
+Both editors publish menus through those shared preferences. See
+[binary contracts](formats.md) for the format owners.
 
 The structure draws on Apple's [iPod classic User Guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf),
 especially its Home ordering, Extras grouping, and Menu-to-parent navigation.

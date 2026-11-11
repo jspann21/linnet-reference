@@ -113,7 +113,6 @@ uint32_t ln_games_hud_revision(void){return revision+(module?module->revision():
 void ln_games_draw(const struct ln_ui_canvas_context *context){if(module)module->draw(context);}
 const char *ln_games_text(const char *key){return key&&!strcmp(key,"Game music")?(music_on?"Play: Pause music":"Play: Start/resume music"):"";}
 void ln_games_music_toggle(void){toggle_song();++revision;}
-void ln_games_configure(uint32_t mask){(void)mask;}
 void ln_games_best_set(uint32_t index,uint16_t value){if(index<128u&&value>scores[index])scores[index]=value;}
 void ln_games_audio_step(void){}
 void ln_games_audio_stop(void){}

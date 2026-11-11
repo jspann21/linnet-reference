@@ -7,7 +7,7 @@ from tools.content import media_manager as media
 from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
-from tools.content.guard import guarded_path as _plain, guard_volume as _volume_guard
+from tools.content.guard import guard_volume as _volume_guard
 from tools.content.guard import require_linnet
 from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
 
@@ -88,17 +88,11 @@ def decode(data, identity=None):
 def read(identity):
     identity = media.refresh(identity)
     root = Path(identity['root'])
-    path = root / '.LINNET' / 'MENUS.BIN'
-    _plain(path, root)
     from . import device_preferences
     saved = device_preferences.read(root)['value']['menus']
     if saved is not None:
         return decode(saved, identity)
-    state = defaults(identity)
-    if path.exists():
-        with path.open('rb') as reader:
-            state = decode(reader.read(81), identity)
-    return state
+    return defaults(identity)
 
 
 def reconcile(base, desired, current):

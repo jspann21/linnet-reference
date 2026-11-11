@@ -22,7 +22,7 @@ generation. Failed clock transitions disable the optimization and restore the
 normal clock; failure to restore stops further executive work.
 
 The policy leaves video clock ownership with the video service. Handoffs restore
-108 MHz so older Boot and monitor code receive the original clock layout.
+108 MHz so Boot and monitor code receive the required clock layout.
 
 ## Idle deadlines
 

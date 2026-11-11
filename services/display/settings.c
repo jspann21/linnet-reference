@@ -8,7 +8,7 @@
 #include "services/games/games.h"
 #include "linnet_build.h"
 #include "hal/api/ata.h"
-/* Append Off so existing saved timeout choices retain their meaning. */
+/* The backlight Off choice uses index 7. */
 enum { BACKLIGHT_OFF=7 };
 static const uint32_t seconds[]={0,5,10,15,30,60,120,0};
 static const char *const labels[]={"Backlight: Always on","Backlight: 5 sec","Backlight: 10 sec","Backlight: 15 sec","Backlight: 30 sec","Backlight: 1 minute","Backlight: 2 minutes","Backlight: Off"};
@@ -17,11 +17,11 @@ static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 mi
 static uint8_t shutdown_choice[2];
 static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
-/* SETT byte 7 bits 6..7: 0 Classic, 1 legacy Off, 2 Low, 3 High. */
+/* SETT byte 7 bits 6..7: 0 Classic, 1 reserved, 2 Low, 3 High. */
 static uint8_t click_tone;
 /* SETT capacity word: bits 0..15 mAh, 16..18 attenuation (0..4),
  * 19..20 output (Auto/Both/Speaker/Headphones), 21 disabled. Zero extension
- * preserves full volume, Auto routing and enabled feedback for older records. */
+ * selects full volume, Auto routing and enabled feedback. */
 static uint8_t click_volume=4;
 static uint8_t click_output;
 static bool click_enabled=true;
@@ -37,13 +37,6 @@ static uint8_t saved_menus[80];
 static uint16_t game_best[LN_GAME_COUNT];
 extern void ln_games_best_set(uint32_t index,uint16_t value);
 static bool menus_loaded;
-static uint32_t menus_phase;
-static uint8_t menus_data[80];
-static struct ln_fat32_file menus_file;
-static bool games_loaded;
-static uint32_t games_phase;
-static uint8_t games_data[12];
-static struct ln_fat32_file games_file;
 static bool about_loaded;
 static uint32_t about_phase,about_count,about_percent;
 static uint8_t about_data[1024]
@@ -70,8 +63,7 @@ static char about_ata_rows[8][64]
     __attribute__((section(".cover_high"),aligned(32)))
 #endif
 ;
-extern void ln_games_configure(uint32_t mask);
-bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded&&apple_font_loaded;}
+bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&about_loaded&&apple_font_loaded;}
 static bool step_busy;
 static char battery_label[25];
 static char update_labels[5][32];
@@ -101,7 +93,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_volume=4;click_output=LN_CLICK_AUTO;click_enabled=true;click_fallback_ready=click_changed=click_volume_changed=click_output_changed=click_enabled_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=prefs_dirty=prefs_menus=false;prefs_revision=0;ln_preferences_restore_brightness(100);for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_volume=4;click_output=LN_CLICK_AUTO;click_enabled=true;click_fallback_ready=click_changed=click_volume_changed=click_output_changed=click_enabled_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=prefs_dirty=prefs_menus=false;prefs_revision=0;ln_preferences_restore_brightness(100);for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
     (void)ln_ui_apple_font_load(0,0);
 #if LINNET_UI_WIDTH!=160u
     apple_font_loaded=false;apple_font_phase=0;
@@ -231,8 +223,8 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t packed_capacity=ln_read_le32(raw+28),saved_capacity=packed_capacity&65535u,attenuation=(packed_capacity>>16)&7u;
     if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u||attenuation>4u||(packed_capacity>>22))return malformed_record();
     uint8_t saved_tone=raw[7]>>6,saved_output=(packed_capacity>>19)&3u;
-    bool saved_enabled=saved_tone!=1u&&!(packed_capacity&(1u<<21));
-    if(saved_tone==1u)saved_tone=0;
+    if(saved_tone==1u)return malformed_record();
+    bool saved_enabled=!(packed_capacity&(1u<<21));
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
         ++revision;
@@ -343,12 +335,12 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==5u?1u+LN_GAME_COUNT*2u:version==6u?119u:0u;
+            uint32_t suffix=119u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
-            if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
+            if(length<127u||length>sizeof payload||version!=6u||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
                (id_length>80u)||!theme_id_valid(payload+8,id_length))theme_available=false;
-            if(theme_available&&version==6u){
+            if(theme_available){
                 uint32_t at=45u+id_length;
                 if(payload[at]<5u||payload[at]>100u||payload[at+1u]!=1u||!ln_ui_menu_valid(payload+at+2u,80u))theme_available=false;
             }
@@ -359,12 +351,12 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&(version==5u||version==6u)){
+            if(theme_available){
                 uint32_t scores=9u+id_length;
                 for(uint32_t i=0;i<LN_GAME_COUNT;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
             }
         }
-        if(theme_available&&length>=127u&&ln_read_le32(payload+4)==6u){
+        if(theme_available&&length>=127u){
             uint32_t id_length=length-127u,at=45u+id_length;
             if(payload[at]<5u||payload[at]>100u||payload[at+1u]!=1u)theme_available=false;
             else if(!prefs_revision){
@@ -417,30 +409,10 @@ const char *ln_preferences_timeout_label(void){return ln_display_settings_label(
 static void menus_finished(void){menus_loaded=true;if(prefs_menus&&!ln_ui_menu_load(saved_menus,80u))theme_available=false;++revision;}
 static void menus_step(void){
     if(menus_loaded||!ln_storage_mounted())return;
-    const uint32_t generation=0x4d454e55u;int result;uint32_t transferred=0;
-    if(menus_phase==0){result=ln_storage_media_open("/.LINNET/MENUS.BIN",generation);if(!result)return;if(result<0){menus_finished();return;}menus_phase=1;return;}
-    if(menus_phase==1){result=ln_storage_media_poll_deferred(generation,&menus_file,0);if(!result)return;if(result<0||menus_file.size!=sizeof menus_data){menus_finished();return;}menus_phase=2;}
-    if(menus_phase==2){result=ln_storage_media_read(&menus_file,0,menus_data,sizeof menus_data,generation);if(!result)return;if(result<0){menus_finished();return;}menus_phase=3;return;}
-    result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
-    if(result>0&&transferred==sizeof menus_data)(void)ln_ui_menu_load(menus_data,sizeof menus_data);
     menus_finished();
 }
-static void games_step(void){
-    if(games_loaded||!menus_loaded||!ln_storage_mounted())return;
-    const uint32_t generation=0x47414d45u;int result;uint32_t transferred=0;
-    if(games_phase==0){result=ln_storage_media_open("/.LINNET/GAMES.BIN",generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=1;return;}
-    if(games_phase==1){result=ln_storage_media_poll_deferred(generation,&games_file,0);if(!result)return;if(result<0||games_file.size!=sizeof games_data){games_loaded=true;return;}games_phase=2;}
-    if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
-    result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
-    if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       games_data[4]==4u&&!(games_data[7]&~(LN_GAME_MASK>>16))&&
-       ln_read_le32(games_data+8)==ln_crc32(games_data,8u))
-        {uint32_t mask=games_data[5]|(uint32_t)games_data[6]<<8|(uint32_t)games_data[7]<<16;
-         ln_games_configure(mask);}
-    games_loaded=true;++revision;
-}
 static void about_step(void){
-    if(about_loaded||!games_loaded||!ln_storage_mounted())return;
+    if(about_loaded||!menus_loaded||!ln_storage_mounted())return;
     const uint32_t generation=0x41424f54u;int result;uint32_t transferred=0;
     if(about_phase==0){result=ln_storage_media_open("/.LINNET/ABOUT.BIN",generation);if(!result)return;if(result<0){about_loaded=true;return;}about_phase=1;return;}
     if(about_phase==1){result=ln_storage_media_poll_deferred(generation,&about_file,0);if(!result)return;if(result<0||about_file.size!=sizeof about_data){about_loaded=true;return;}about_phase=2;}
@@ -556,7 +528,7 @@ static void settings_step(bool may_write,bool presented,uint32_t presented_revis
      * the UI this is queued work, rather than an in-progress disk write. */
     bool deferred=!may_write&&ln_display_settings_pending();
     if(deferred!=save_deferred){save_deferred=deferred;++revision;}
-    step_busy=true;if(may_write){menus_step();games_step();about_step();apple_font_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
+    step_busy=true;if(may_write){menus_step();about_step();apple_font_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
 }
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision){
     settings_step(may_write,theme_presented,presented_revision,false);

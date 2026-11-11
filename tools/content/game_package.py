@@ -11,7 +11,7 @@ SLOT_OFFSET, SLOT_BYTES = 0x7c0000, 0x40000
 HEADER_BYTES, CATALOGUE_MAX, ROW_BYTES = 256, 128, 256
 ID_PATTERN = re.compile(r'[a-z0-9-]+(?:\.[a-z0-9-]+)+', re.ASCII)
 FILE_PATTERN = re.compile(r'[A-Z0-9]{8}\.LGM', re.ASCII)
-LEGACY_IDS = ('comet-run', 'pulse-path', 'solitaire', 'sudoku', 'brick', 'music-quiz',
+BUILTIN_IDS = ('comet-run', 'pulse-path', 'solitaire', 'sudoku', 'brick', 'music-quiz',
               'vortex', 'minesweeper', 'falling-blocks', 'reversi', 'snake',
               'word-search', 'scrub', 'dial-heist', 'mixtape', 'signal',
               'clockwork-city', 'pocket-pinball')
@@ -36,20 +36,20 @@ def _read_text(data):
     return value.decode('ascii')
 
 
-def _legacy(game_id, legacy):
-    if type(legacy) is not int or not (legacy == 0xffffffff or 0 <= legacy < len(LEGACY_IDS)):
-        raise ValueError('Invalid legacy game ID')
-    expected = 'linnet.' + LEGACY_IDS[legacy] if legacy != 0xffffffff else None
+def _builtin(game_id, builtin):
+    if type(builtin) is not int or not (builtin == 0xffffffff or 0 <= builtin < len(BUILTIN_IDS)):
+        raise ValueError('Invalid builtin game ID')
+    expected = 'linnet.' + BUILTIN_IDS[builtin] if builtin != 0xffffffff else None
     if expected is not None and game_id != expected:
-        raise ValueError('Legacy game identity mismatch')
-    if game_id in {'linnet.' + name for name in LEGACY_IDS} and expected != game_id:
-        raise ValueError('Reserved legacy game identity')
+        raise ValueError('Built-in game identity mismatch')
+    if game_id in {'linnet.' + name for name in BUILTIN_IDS} and expected != game_id:
+        raise ValueError('Reserved builtin game identity')
 
 
 def package(payload, *, target, game_id, title, description='', bss=0, entry=0,
-            capabilities=0, legacy=0xffffffff, stack=8192, text=None, schema=1, version=1):
+            capabilities=0, builtin=0xffffffff, stack=8192, text=None, schema=1, version=1):
     spec = target_spec(target)
-    identity(game_id); _legacy(game_id, legacy)
+    identity(game_id); _builtin(game_id, builtin)
     if not spec['capabilities'].get('games',False) or spec['endianness'] != 'little':
         raise ValueError('Target does not support native games')
     text=len(payload) if text is None else text
@@ -65,7 +65,7 @@ def package(payload, *, target, game_id, title, description='', bss=0, entry=0,
     header = bytearray(256)
     struct.pack_into('<16I', header, 0, 0x4d474e4c, 1, 256, spec['image_target'], ABI, LAYOUT,
                      spec['load_address']+SLOT_OFFSET, len(payload), bss, entry,
-                     capabilities, legacy, zlib.crc32(payload), stack,text,schema)
+                     capabilities, builtin, zlib.crc32(payload), stack,text,schema)
     header[64:128] = _text(game_id,64)
     header[128:168] = _text(title,40)
     header[168:216] = _text(description,48)
@@ -79,7 +79,7 @@ def inspect(data, target=None):
     if len(data) < 288 or len(data) > HEADER_BYTES+SLOT_BYTES:
         raise ValueError('Invalid game package length')
     fields=struct.unpack_from('<16I',data)
-    magic,format_version,size,number,abi,layout,load,length,bss,entry,caps,legacy,crc,stack,text,schema=fields
+    magic,format_version,size,number,abi,layout,load,length,bss,entry,caps,builtin,crc,stack,text,schema=fields
     version=struct.unpack_from('<I',data,248)[0]
     if (magic != 0x4d474e4c or format_version != 1 or size != 256 or abi != ABI or layout != LAYOUT
             or not version or not schema or not 4 <= text <= length or text&3 or length&31 or bss&31
@@ -88,7 +88,7 @@ def inspect(data, target=None):
             or entry > text-4 or entry & 3 or caps & ~1 or not 0 < stack <= 8192
             or zlib.crc32(data[256:]) != crc or hashlib.sha256(data[256:]).digest() != data[216:248]):
         raise ValueError('Damaged or incompatible native game package')
-    game_id=identity(_read_text(data[64:128]));_legacy(game_id,legacy)
+    game_id=identity(_read_text(data[64:128]));_builtin(game_id,builtin)
     title=_read_text(data[128:168]);description=_read_text(data[168:216])
     if not title:
         raise ValueError('Game title is empty')
@@ -97,7 +97,7 @@ def inspect(data, target=None):
         if not spec['capabilities'].get('games',False) or number != spec['image_target'] or load != spec['load_address']+SLOT_OFFSET:
             raise ValueError('Game package belongs to a different device')
     return dict(id=game_id,title=title,description=description,target=number,load=load,
-                payload=length,bss=bss,entry=entry,capabilities=caps,legacy=legacy,
+                payload=length,bss=bss,entry=entry,capabilities=caps,builtin=builtin,
                 crc=crc,stack=stack,text=text,schema=schema,version=version,
                 payload_sha256=data[216:248].hex(),bytes=len(data))
 
@@ -109,7 +109,7 @@ def catalogue(rows, *, generation, target):
     data=bytearray(struct.pack('<8I',0x43474e4c,1,generation,spec['image_target'],len(rows),ROW_BYTES,0,0))
     seen=set();names=set();slots=set()
     for row in rows:
-        game_id=identity(row['id']);_legacy(game_id,row['legacy'])
+        game_id=identity(row['id']);_builtin(game_id,row['builtin'])
         filename=row['filename'];slot=row['save_slot']
         if (game_id in seen or filename in names or not FILE_PATTERN.fullmatch(filename)
                 or type(slot) is not int or not 0 <= slot < CATALOGUE_MAX or slot in slots
@@ -121,7 +121,7 @@ def catalogue(rows, *, generation, target):
         record=bytearray(256)
         record[:64]=_text(game_id,64);record[64:104]=_text(row['title'],40)
         record[104:184]=_text(row['description'],80);record[184:197]=_text(filename,13)
-        struct.pack_into('<5I',record,200,row['bytes'],row['file_crc'],row['legacy'],row['capabilities'],slot)
+        struct.pack_into('<5I',record,200,row['bytes'],row['file_crc'],row['builtin'],row['capabilities'],slot)
         data.extend(record)
     return bytes(data)+struct.pack('<I',zlib.crc32(data))
 
@@ -139,10 +139,10 @@ def read_catalogue(data, target):
         p=data[offset:offset+256]
         if any(p[197:200]) or any(p[220:]):
             raise ValueError('Nonzero catalogue reserved bytes')
-        size,crc,legacy,caps,slot=struct.unpack_from('<5I',p,200)
+        size,crc,builtin,caps,slot=struct.unpack_from('<5I',p,200)
         rows.append(dict(id=_read_text(p[:64]),title=_read_text(p[64:104]),
                          description=_read_text(p[104:184]),filename=_read_text(p[184:197]),
-                         bytes=size,file_crc=crc,legacy=legacy,capabilities=caps,save_slot=slot))
+                         bytes=size,file_crc=crc,builtin=builtin,capabilities=caps,save_slot=slot))
     if catalogue(rows,generation=generation,target=target) != data:
         raise ValueError('Noncanonical game catalogue')
     return dict(generation=generation,rows=rows)

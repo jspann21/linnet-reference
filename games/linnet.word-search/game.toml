@@ -12,7 +12,7 @@ stack_bytes = 8192
 
 [build]
 sources = ["src/game.c"]
-legacy = 11
+builtin = 11
 
 [[build.tables]]
 name = "word_boards"

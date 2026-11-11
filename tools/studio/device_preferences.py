@@ -1,4 +1,4 @@
-"""Shared theme, brightness and menu payload in the existing A/B state records."""
+"""Shared theme, brightness and menu payload in the A/B state records."""
 import os
 from pathlib import Path
 import re
@@ -13,24 +13,21 @@ from tools.studio.update_history import _decode_record
 def decode_payload(payload):
     if not payload:
         return dict(theme=b'', scores=bytes(36), brightness=100, menus=None)
-    if len(payload) < 9 or payload[:4] != b'THMS':
+    if len(payload) < 127 or payload[:4] != b'THMS':
         raise ValueError('Invalid device preferences')
     version = struct.unpack_from('<I', payload, 4)[0]
-    suffix = {0: 1, 5: 37, 6: 119}.get(version, 0)
-    if not suffix or not 8 + suffix <= len(payload) <= 256:
+    if version != 6 or len(payload) > 256:
         raise ValueError('Unsupported device preferences')
-    end = len(payload) - suffix
+    end = len(payload) - 119
     theme = payload[8:end]
     if len(theme) > 80 or payload[end] or (theme and not re.fullmatch(rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', theme)):
         raise ValueError('Invalid theme preference')
-    result = dict(theme=theme, scores=payload[end+1:end+37] if version in (5, 6) else bytes(36), brightness=100, menus=None)
-    if version == 6:
-        if not 5 <= payload[end+37] <= 100 or payload[end+38] != 1:
-            raise ValueError('Invalid display preferences')
-        from .screen_settings import decode
-        decode(payload[end+39:end+119])
-        result.update(brightness=payload[end+37], menus=payload[end+39:end+119])
-    return result
+    if not 5 <= payload[end+37] <= 100 or payload[end+38] != 1:
+        raise ValueError('Invalid display preferences')
+    from .screen_settings import decode
+    decode(payload[end+39:end+119])
+    return dict(theme=theme, scores=payload[end+1:end+37], brightness=payload[end+37],
+                menus=payload[end+39:end+119])
 
 
 def encode_payload(value):

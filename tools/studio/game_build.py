@@ -96,12 +96,12 @@ def build(manifest, target, output):
         raise ValueError('Game manifest requires [game] and [build] only')
     game=config['game'];settings=config['build']
     required={'id','title','description','author','license','version','schema','targets','capabilities','stack_bytes'}
-    if set(game)!=required or set(settings)-{'sources','legacy','assembly_stack_bytes','assets','tables'} or not settings.get('sources'):
+    if set(game)!=required or set(settings)-{'sources','builtin','assembly_stack_bytes','assets','tables'} or not settings.get('sources'):
         raise ValueError('Unexpected or missing game manifest fields')
     fmt.identity(game['id'])
     if not isinstance(game['author'],str) or not game['author'].strip() or not isinstance(game['license'],str) or not game['license'].strip():
         raise ValueError('Game author and license are required')
-    legacy=settings.get('legacy',0xffffffff);fmt._legacy(game['id'],legacy)
+    builtin=settings.get('builtin',0xffffffff);fmt._builtin(game['id'],builtin)
     if target not in game['targets'] or set(game['capabilities'])-{'music'}:
         raise ValueError('Game does not support the requested target/capabilities')
     spec=target_spec(target)
@@ -127,8 +127,8 @@ def build(manifest, target, output):
            '-I'+str(ROOT/'sdk/include'),'-I'+str(project),'-I'+str(output/'prepared'),
            f'-DLINNET_UI_WIDTH={spec["lcd_width"]}u',f'-DLINNET_UI_HEIGHT={spec["lcd_height"]}u']
     flags.extend(f'-D{name}={value}' for name,value in presentation_defines(spec).items())
-    if legacy!=0xffffffff:
-        flags+=['-I'+str(ROOT),f'-DLN_GAME_PACKAGE_ID={legacy}',
+    if builtin!=0xffffffff:
+        flags+=['-I'+str(ROOT),f'-DLN_GAME_PACKAGE_ID={builtin}',
                 '-DLINNET_AUDIO=1','-DLINNET_STORAGE=1','-Wno-unused-function','-Wno-unused-variable']
     # The same optimized EABI memory helpers as firmware; linked only if used.
     sources.extend((ROOT/'kernel/memory.S',ROOT/'services/audio/vorbis/division.c'))
@@ -161,7 +161,7 @@ def build(manifest, target, output):
     entry=struct.unpack_from('<I',elf.read_bytes(),24)[0]-address
     data=fmt.package(payload,target=target,game_id=game['id'],title=game['title'],
                      description=game['description'],bss=bss['bytes'],entry=entry,
-                     capabilities=int('music' in game['capabilities']),legacy=legacy,
+                     capabilities=int('music' in game['capabilities']),builtin=builtin,
                      stack=game['stack_bytes'],text=text['bytes'],schema=game['schema'],version=game['version'])
     details=fmt.inspect(data,target)
     digest=hashlib.sha256(data).hexdigest();filename=digest[:8].upper()+'.LGM'
@@ -191,15 +191,15 @@ def build_library(target, output):
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     games=[];manifests=sorted((ROOT/'games').glob('linnet.*/game.toml'))
     identities=[tomllib.loads(p.read_text(encoding='utf-8'))['game']['id'] for p in manifests]
-    if len(identities)!=len(fmt.LEGACY_IDS) or set(identities)!={'linnet.'+name for name in fmt.LEGACY_IDS}:
-        raise ValueError('Built-in game library must contain every reserved legacy identity exactly once')
+    if len(identities)!=len(fmt.BUILTIN_IDS) or set(identities)!={'linnet.'+name for name in fmt.BUILTIN_IDS}:
+        raise ValueError('Built-in game library must contain every reserved builtin identity exactly once')
     for manifest in manifests:
         report=build(manifest,target,output/'build'/manifest.parent.name)
         source=Path(report['package']);destination=output/report['filename'];data=source.read_bytes()
         if destination.exists() and destination.read_bytes()!=data:
             raise ValueError('Prepared game filename collision')
         destination.write_bytes(data)
-        games.append({key:report[key] for key in ('id','filename','sha256','author','license','legacy')})
+        games.append({key:report[key] for key in ('id','filename','sha256','author','license','builtin')})
     metadata=dict(format='LNGAMES',version=1,target=target,games=games)
     (output/'library.json').write_text(json.dumps(metadata,sort_keys=True,indent=2)+'\n',encoding='utf-8')
     write_library_notices(output)
@@ -237,7 +237,7 @@ def library(directory,target):
             raise ValueError('Prepared game library notice is missing or unsafe')
     result={};filenames=set()
     for item in value['games']:
-        if not isinstance(item,dict) or set(item)!={'id','filename','sha256','author','license','legacy'}:
+        if not isinstance(item,dict) or set(item)!={'id','filename','sha256','author','license','builtin'}:
             raise ValueError('Invalid prepared game manifest')
         filename=item['filename']
         if not isinstance(filename,str) or not fmt.FILE_PATTERN.fullmatch(filename) or filename in filenames:
@@ -246,7 +246,7 @@ def library(directory,target):
         if path.is_symlink() or not path.is_file() or path.stat().st_size>256+fmt.SLOT_BYTES:
             raise ValueError('Missing or unsafe prepared game')
         data=path.read_bytes();header=fmt.inspect(data,target)
-        if (header['id']!=item['id'] or header['legacy']!=item['legacy']
+        if (header['id']!=item['id'] or header['builtin']!=item['builtin']
                 or hashlib.sha256(data).hexdigest()!=item['sha256'] or item['id'] in result):
             raise ValueError('Prepared game checksum/identity mismatch')
         filenames.add(filename);result[item['id']]=path
@@ -271,8 +271,8 @@ def build_preview(manifest,target,output):
            f'-DLINNET_UI_WIDTH={spec["lcd_width"]}u',f'-DLINNET_UI_HEIGHT={spec["lcd_height"]}u']
     if os.name!='nt':flags+=['-fPIC']
     flags.extend(f'-D{name}={value}' for name,value in presentation_defines(spec).items())
-    if settings.get('legacy',0xffffffff)!=0xffffffff:
-        flags+=['-I'+str(ROOT),f'-DLN_GAME_PACKAGE_ID={settings["legacy"]}',
+    if settings.get('builtin',0xffffffff)!=0xffffffff:
+        flags+=['-I'+str(ROOT),f'-DLN_GAME_PACKAGE_ID={settings["builtin"]}',
                 '-DLINNET_AUDIO=1','-DLINNET_STORAGE=1','-Wno-unused-function','-Wno-unused-variable']
     run([toolchain()['compiler']['path'],*flags,*sources,'-o',destination])
     return dict(path=str(destination),id=report['id'],title=report['title'],description=report['description'],schema=report['schema'],capabilities=report['capabilities'])

@@ -1,1 +1,1 @@
-#include "services/games/legacy_package.c"
+#include "services/games/builtin_package.c"

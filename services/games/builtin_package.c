@@ -1,4 +1,4 @@
-/* Compatibility adapter: each native package specializes one existing game.
+/* Built-in game adapter: each native package specializes one game.
  * Compiler constant propagation and section GC remove all other game data/code. */
 #include "sdk/include/linnet/game.h"
 static const struct ln_game_host *package_host;
@@ -10,7 +10,7 @@ static const struct ln_game_host *package_host;
 #define ln_music_quiz_end() package_host->quiz_end()
 #define ln_music_toggle() package_host->music_toggle()
 #define ln_player_pause(paused) package_host->music_pause(paused)
-/* Private legacy shapes stay inside this adapter, never in the public ABI. */
+/* Private helper types stay inside this adapter, never in the public ABI. */
 struct ln_music_library_row {uint32_t index;char title[256];};
 struct ln_player_status {uint32_t phase;};
 #define LN_PLAYER_PLAY 4u
@@ -26,26 +26,26 @@ static const struct ln_music_library_row *ln_music_current(void){
     return &row;
 }
 static void ln_player_snapshot(struct ln_player_status *out){out->phase=package_host->music_playing()?LN_PLAYER_PLAY:0;}
-#define ln_games_count legacy_count
-#define ln_games_label legacy_label
-#define ln_games_description legacy_description
-#define ln_games_configure legacy_configure
-#define ln_games_best_set legacy_best_set
-#define ln_games_start legacy_start
-#define ln_games_input legacy_input
-#define ln_games_playing legacy_playing
-#define ln_games_hud_revision legacy_revision
-#define ln_games_deadline legacy_deadline
-#define ln_games_tick legacy_tick
-#define ln_games_text legacy_text
-#define ln_games_draw legacy_draw
-#define ln_games_audio_stop legacy_audio_stop
-#define ln_games_audio_step legacy_audio_step
-#include "services/games/legacy.c"
+#define ln_games_count builtin_count
+#define ln_games_label builtin_label
+#define ln_games_description builtin_description
+#define ln_games_configure builtin_configure
+#define ln_games_best_set builtin_best_set
+#define ln_games_start builtin_start
+#define ln_games_input builtin_input
+#define ln_games_playing builtin_playing
+#define ln_games_hud_revision builtin_revision
+#define ln_games_deadline builtin_deadline
+#define ln_games_tick builtin_tick
+#define ln_games_text builtin_text
+#define ln_games_draw builtin_draw
+#define ln_games_audio_stop builtin_audio_stop
+#define ln_games_audio_step builtin_audio_step
+#include "services/games/builtin.c"
 static bool package_start(void){
     uint32_t seed=package_host->time_us();random_state^=seed;if(!random_state)random_state=0x9e3779b9u;
     last_tick=seed;
-    best[LN_GAME_PACKAGE_ID]=(uint16_t)package_host->best();legacy_start(0);return true;
+    best[LN_GAME_PACKAGE_ID]=(uint16_t)package_host->best();builtin_start(0);return true;
 }
 static bool package_cue(struct ln_game_cue *out){
     if(!sound_pending)return false;out->kind=sound_pending;sound_pending=0;
@@ -56,8 +56,8 @@ static void package_stop(void){
     sound_pending=0;
     if(game==MUSIC_QUIZ)package_host->quiz_end();
 }
-static const struct ln_game_module module={LN_GAME_ABI,sizeof module,package_start,legacy_input,
-    legacy_tick,legacy_deadline,legacy_draw,legacy_playing,legacy_revision,package_cue,package_stop};
+static const struct ln_game_module module={LN_GAME_ABI,sizeof module,package_start,builtin_input,
+    builtin_tick,builtin_deadline,builtin_draw,builtin_playing,builtin_revision,package_cue,package_stop};
 #if defined(_WIN32)
 __declspec(dllexport)
 #endif

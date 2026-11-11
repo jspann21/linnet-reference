@@ -19,7 +19,7 @@ all headers have the same version field or that every reserved field is a versio
 | `UPDT`, `HAND`, `RLBK` | Persistent image slots, retained handoff, and failed-candidate information | [Update owner](../services/update/update.c) |
 | `LNPK` | Fixed, reviewed native maintenance package; not arbitrary raw-sector access | [Package builder](../tools/studio/native_package.py), [Photo writer](../targets/photo4g-p98/native_update.c) |
 | `SETT`, `THMS` | User settings; version-six THMS shares theme, scores, brightness and menus in the existing A/B theme records | [Display settings](../services/display/settings.c), [shared host preferences](../tools/studio/device_preferences.py), [storage owner](../services/storage/storage.c) |
-| `MENUS.BIN` / menu envelope | Stable version-three menu IDs, order and shortcuts; the file is the startup fallback, shared edits use THMS | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
+| `MENU` menu envelope | Stable version-three menu IDs, order and shortcuts, stored in shared THMS preferences and accepted as simulator input | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
 | `HIST`, `HPGE` | Redundant paged playback history | [History records](../services/music/history_record.h), [page owner](../services/music/history_pages.c) |
 | `MST3`, `QUEU`, `PROF` | Music queue and sound state | [Music settings](../services/music/settings.c), [queue](../services/music/queue.c), [profile](../services/music/profile.c) |
 
