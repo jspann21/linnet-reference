@@ -81,7 +81,7 @@ repository write permission, through GitHub's built-in token.
 
 ## Build locally on Windows
 
-Use Python 3.14 x64, then run from the repository root:
+Install Git for Windows and Python 3.14 x64, then run from the repository root:
 
 ```powershell
 python -m venv .venv
