@@ -141,7 +141,7 @@ def _saved_method(value):
     method = (value or {}).get("installation_method")
     if method in INSTALLATION_METHODS:
         return method
-    return "rockbox-loader" if (value or {}).get("strategy") == "rockbox-file" else "native-preserve"
+    return None
 
 
 def _saved_previous_boot(value):
@@ -295,13 +295,15 @@ def _resume_context(identity, linnet, *, initialized=True):
                     context.get("strategy") not in ("rockbox-file", "native-directory") or
                     context.get("build") not in ("user", "dev")):
                 continue
-            context["installation_method"] = _saved_method(context)
+            method = _saved_method(context)
+            if method is None or context["strategy"] != INSTALLATION_METHODS[method]["strategy"]:
+                continue
             context["previous_boot"] = _saved_previous_boot(context)
             artifacts = context["artifacts"]
-            if artifacts.get("build") != context["build"]:
+            if (artifacts.get("build") != context["build"] or
+                    artifacts.get("installation_method") != method or
+                    artifacts.get("boot_selector") != INSTALLATION_METHODS[method]["boot_selector"]):
                 continue
-            artifacts.setdefault("installation_method", context["installation_method"])
-            artifacts.setdefault("boot_selector", INSTALLATION_METHODS[context["installation_method"]]["boot_selector"])
             if any(not Path(artifacts[name]).is_file() for name in ("os_image", "boot_image", "boot_wrapper")):
                 continue
             manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
@@ -458,7 +460,8 @@ def assess(identity, *, _validated_identity=False):
                 if (bootstrap.get("target_id") == target_id and phase in ("installed", "restored") and
                         bootstrap.get("active_sha256") == active and bootstrap.get("backup_valid")):
                     marker = dict(target_id=target_id, device_id=identity["disk_serial"],
-                                  strategy="rockbox-file", phase=phase, recovered_from="BOOTSTRAP.JSON")
+                                  strategy="rockbox-file", installation_method="rockbox-loader",
+                                  phase=phase, recovered_from="BOOTSTRAP.JSON")
             except (ValueError, OSError):
                 pass
     recovery_error = None
@@ -784,13 +787,11 @@ def _validate_artifacts(identity, artifacts):
     if len(os_data) > spec["os_capacity_bytes"] or len(boot_data) > spec["os_capacity_bytes"]:
         raise ValueError("installer image exceeds the target OS capacity")
     build = artifacts.get("build")
-    # Old artifact records predate method selection and used the file loader.
-    # New builders and bundle consumers always record the selected method.
-    installation_method = artifacts.get("installation_method", "rockbox-loader")
+    installation_method = artifacts.get("installation_method")
     if installation_method not in INSTALLATION_METHODS:
         raise ValueError("installer artifact installation method is invalid")
     expected_selector = INSTALLATION_METHODS[installation_method]["boot_selector"]
-    if artifacts.get("boot_selector", "none") != expected_selector:
+    if artifacts.get("boot_selector") != expected_selector:
         raise ValueError("installer Boot selector differs from the selected installation method")
     expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
     if expected_profile is None or expected_profile != artifacts.get("os_profile"):
@@ -1303,10 +1304,9 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
         artifacts = reviewed["resume"]["artifacts"]
         if reviewed["resume"].get("build") != build or artifacts.get("build") != build:
             raise ValueError("resume must use the build selected by the saved installation")
-        if _saved_method(reviewed["resume"]) != method_id:
+        if (_saved_method(reviewed["resume"]) != method_id or
+                artifacts.get("installation_method") != method_id):
             raise ValueError("resume must use the installation method selected by the saved installation")
-        artifacts.setdefault("installation_method", method_id)
-        artifacts.setdefault("boot_selector", INSTALLATION_METHODS[method_id]["boot_selector"])
         transaction = Path(reviewed["resume"]["transaction"])
         _validate_artifacts(identity, artifacts)
     else:
@@ -1538,13 +1538,12 @@ def _native_worker(job):
         context = json.loads((transaction / "context.json").read_text(encoding="utf-8"))
         saved_method = _saved_method(context)
         saved_artifacts = dict(context.get("artifacts") or {})
-        saved_artifacts.setdefault("installation_method", saved_method)
-        saved_artifacts.setdefault("boot_selector", INSTALLATION_METHODS[saved_method]["boot_selector"])
         if (current.get("recovery") is not None or
                 current["linnet"]["state"] not in ("absent", "incomplete", "installed") or
                 context.get("target_id") != expected["target_id"] or
                 context.get("device_id") != expected["disk_serial"] or
                 context.get("strategy") != "native-directory" or
+                saved_method is None or
                 saved_method != job["installation_method"] or
                 _saved_previous_boot(context) != job["previous_boot"] or
                 context.get("build") != job["artifacts"].get("build") or

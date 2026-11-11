@@ -96,8 +96,8 @@ def _inputs(identity, transaction, path, digest, device_id, *, cache_scope=None)
             manifest.get('sector_bytes', native.SECTOR) != identity['sector_bytes'] or
             any(storage[key] != identity[key] for key in ('disk_bytes', 'sector_bytes', 'partition_offset', 'partition_bytes'))):
         raise ValueError('Original firmware plan does not match this native iPod')
-    # Old device.json records lack the FAT serial. The original install receipt
-    # contains it, independently of Windows' mode-specific volume GUID.
+    # Bind the FAT serial through the original install receipt, independently
+    # of Windows' mode-specific volume GUID.
     originals = []
     for receipt_path in transaction.glob('install-*.json'):
         if receipt_path.name.endswith('.result.json'):
@@ -140,11 +140,11 @@ def _context(identity, linnet, transaction, *, cache_scope=None):
             linnet.get('state') != 'installed' or linnet.get('candidate_pending')):
         raise ValueError('An interrupted native installation cannot be verified in its current state')
     method = installer._saved_method(context)
-    if installer.INSTALLATION_METHODS[method]['strategy'] != 'native-directory':
+    if method is None or installer.INSTALLATION_METHODS[method]['strategy'] != 'native-directory':
         raise ValueError('The saved installation does not use native firmware recovery')
     artifacts = dict(context['artifacts'])
-    artifacts.setdefault('installation_method', method)
-    artifacts.setdefault('boot_selector', installer.INSTALLATION_METHODS[method]['boot_selector'])
+    if artifacts.get('installation_method') != method:
+        raise ValueError('The saved firmware does not match the installation method')
     installer._validate_artifacts(identity, artifacts)
     path = transaction / 'native-plan/plan.json'
     digest = (transaction / 'native-plan.sha256').read_text(encoding='ascii').strip()

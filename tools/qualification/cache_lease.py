@@ -1,4 +1,4 @@
-"""Compile and run the explicitly requested cache ownership qualification.
+"""Compile and run cache ownership qualification.
 
 Uses the project's pinned host compiler and actual storage sources. Generated
 headers and executables stay in out; no hardware or media writes are performed.
