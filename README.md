@@ -30,10 +30,28 @@ simulator.
 - **Startup selection.** Choose Linnet, preserved Apple software, or a compatible
   installed Rockbox image from the startup menu.
 
-[Hardware](#confirmed-hardware) · [Installation](#get-started) ·
-[Media Manager](#linnet-media) · [Linnet Link](#linnet-link) ·
-[Games](#games) · [Themes](#themes) · [Simulator](#simulator) ·
-[Development](#develop-on-windows) · [Documentation](#explore-the-project)
+## Contents
+
+- [Confirmed hardware](#confirmed-hardware)
+- [Get started](#get-started)
+  - [Install a packaged build](#install-a-packaged-build)
+  - [Startup selection](#startup-selection)
+  - [Add media](#add-media)
+  - [Remove Linnet](#remove-linnet)
+- [Linnet Media](#linnet-media)
+- [Linnet Link](#linnet-link)
+- [Games](#games)
+- [Themes](#themes)
+- [Simulator](#simulator)
+- [Develop on Windows](#develop-on-windows)
+  - [Build firmware](#build-firmware)
+  - [Open Media Manager from source](#open-media-manager-from-source)
+  - [Preview the interface](#preview-the-interface)
+  - [Build for Linnet Link](#build-for-linnet-link)
+  - [Package firmware and the Windows app](#package-firmware-and-the-windows-app)
+- [Explore the project](#explore-the-project)
+- [License](#license)
+- [Credits](#credits)
 
 ## Confirmed hardware
 
