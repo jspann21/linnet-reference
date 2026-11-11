@@ -100,9 +100,12 @@ def setup():
     spec = json.loads(SPEC.read_text(encoding='utf-8'))
     archives = {name: _download(item) for name, item in spec.items()}
     compiler_spec = tomllib.loads((ROOT / 'config/toolchain.toml').read_text(encoding='utf-8'))['toolchain']
-    compiler = ROOT / 'out/toolchains' / compiler_spec['windows_archive'] / 'bin'
-    if not (compiler / 'clang.exe').is_file():
-        raise RuntimeError('Set up the compiler first: python linnet setup')
+    compiler = Path(os.environ.get('LINNET_LLVM_BIN') or
+                    ROOT / 'out/toolchains' / compiler_spec['windows_archive'] / 'bin').resolve()
+    missing = [name for name in ('clang.exe', 'mingw32-make.exe') if not (compiler / name).is_file()]
+    if missing:
+        raise RuntimeError('Conversion-tool compiler is missing ' + ', '.join(missing) +
+                           '. Run python linnet setup or check LINNET_LLVM_BIN.')
     shell = _bash()
     parent.mkdir(parents=True, exist_ok=True)
     log = parent / (key + '.log')
