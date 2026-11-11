@@ -1,10 +1,14 @@
 # iPod Photo A1099
 
-The `photo4g-p98` target has a 220 x 176 color display. Native games are included
-in its default system and appear under **Games** on Home. See
+The `photo4g-p98` target has a 220 × 176 color display. Its default firmware
+includes the game loader; install game packages through Media Manager. Games
+appear under **Extras → Games** by default. See
 [hardware support](../../docs/hardware.md) for tested configurations and features.
 
 ## Games
+
+Media Manager and firmware ZIPs include 18 built-in game packages. The controls
+below cover three examples; see [Games](../../README.md#games) for the full list.
 
 - **Comet Run:** turn the wheel or press Previous/Next to steer. Select spends
   40% energy on a shield; energy recharges during play. Three lives, increasing
@@ -29,8 +33,9 @@ screen. The game rules and audio live in `services/games/`; the
 and suits drawn separately for legibility.
 
 Use **Games** in Linnet Media Manager while the iPod is in Disk Mode to select
-installed games. Save, eject safely, and restart Linnet to apply the selection.
+installed games. Choose **Update games on iPod**, eject safely, and restart
+Linnet to apply the selection.
 
-The resident firmware budget is 7.875 MiB, including its stacks, leaving
-128 KiB below the existing 8 MiB OS boundary. Cover Flow artwork, update
-staging, diagnostic capture, and recovery retain their separate reservations.
+Ordinary firmware reserves 7.75 MiB for the resident OS and its stacks, followed
+by the separate 256 KiB game slot within the 8 MiB OS region. Cover Flow artwork,
+update staging, diagnostic capture, and recovery have separate reservations.

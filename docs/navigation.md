@@ -93,7 +93,7 @@ Home
 Shuffle Songs starts the entire library in random order. Shuffle in Settings or
 Playback Options changes the current playback queue. Sound and Sleep Timer open
 the same controls wherever they are accessed. Menu returns to the menu that
-opened them. The default Settings order is Shuffle, Repeat, Sound, Display,
+opened them. The default Settings order is Shuffle, Repeat, Edit Menus, Sound, Display,
 Date & Time, Power, USB Disk Mode, Firmware Info, and About Linnet. iPod Video
 adds Video Settings immediately after Display; Photo and Classic support video
 playback but do not expose this TV-output menu.
@@ -129,8 +129,8 @@ Play/Pause and Next/Previous in Now Playing do not produce click feedback.
 Click output selects Both, Speaker, Headphones, or Auto. Both uses the speaker
 and connected headphones; Speaker always uses the internal piezo; Headphones
 stays silent when unplugged. Auto uses the speaker without headphones and
-switches to headphones when inserted. Existing settings default to Auto and
-100% volume; a saved Off choice stays off. Left/Right change a setting, and
+switches to headphones when inserted. Click output defaults to Auto and click
+volume to 100%; saved choices are retained. Left/Right change a setting, and
 Select advances it. Each adjustment immediately previews the new settings.
 Clicker Off or 0% click volume silences both outputs.
 Headphone clicks work during playback, pause, and idle; they also follow music
@@ -176,8 +176,9 @@ Destructive playlist deletion retains its Cancel-first confirmation.
 
 In Now Playing, the wheel changes volume, Play toggles pause, Left/Right change
 tracks, Select opens Playback Options, and Menu returns to music browsing. In a
-video, Left/Right seek ten seconds, Select toggles the controls, and Menu exits.
-The TV output choice appears when TV Out is Ask.
+video, Play toggles pause, Left/Right request a ten-second seek, and Menu exits.
+On iPod Video, Select also toggles pause; on Photo and Classic, it toggles the
+controls. The TV output choice appears when TV Out is Ask.
 
 Files browses the mounted disk, including hidden and system folders. Select opens
 a folder or file; Menu returns to its parent and restores the selected row. Left
@@ -206,8 +207,9 @@ Supported shortcuts hidden in Media Manager still appear here as `[ ]` so they
 can be shown again. The editor changes only shortcut visibility and order, using
 compiled screen metadata and cached rows. It does not prepare media, rebuild
 libraries, load new screens, or enable features omitted from the firmware.
-Games and UI Demo choices stay under Media Manager's control and are excluded
-from this editor; their saved selections are preserved.
+Games choices stay under Media Manager's control and are excluded from this
+editor; their saved selections are preserved. The optional UI Demo is configured
+in a custom firmware build; see the [SDK](../sdk/README.md).
 
 Under **Settings → Display → Brightness**, turn the wheel to adjust from 5% to
 100% in 5% steps. The backlight changes immediately and the value is saved for
@@ -219,8 +221,8 @@ after publication completes. A storage preparation failure shows **Saving
 unavailable** rather than leaving a save pending indefinitely.
 
 Media Manager's **Screens** page edits the same saved shortcuts and ordering.
-Use matching updated firmware and Media Manager for on-device menu sync. Reconnect
-in Disk Mode or choose **Reload from iPod** to see device edits. Saving merges
+Reconnect in Disk Mode, then choose **Screen options → Reload from iPod…** to see
+device edits. Saving merges
 changes to different menus. If both interfaces changed the same menu differently,
 Media Manager stops the save and asks you to reload and review the changes.
 Reloading asks before discarding unsaved desktop edits.

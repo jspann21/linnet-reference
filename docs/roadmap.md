@@ -1,10 +1,10 @@
 # Roadmap
 
 Current features and tested devices are documented in the [guides](README.md)
-and [hardware reference](hardware.md). This roadmap tracks release packaging,
+and [hardware reference](hardware.md). This roadmap tracks verification,
 performance work, and future features. Priorities are not release dates.
 
-## P1 — Release readiness
+## P1 — Hardware and distribution checks
 
 - [ ] **Remaining interruption and resource-limit cases.** Check USB loss during
   publication, interruption points beyond the exercised settings/candidate and
@@ -23,10 +23,6 @@ performance work, and future features. Priorities are not release dates.
 - [ ] **Clean-machine packaging check.** Run the packaged Windows app on a
   clean computer using the included conversion tools.
   [Windows distribution](../tools/studio/media_distribution.py).
-
-- [ ] **First downloadable release.** Publish accepted Windows and firmware ZIPs
-  with checksums, installation/recovery notes, and a link to supported hardware.
-  Update [Get started](../README.md#get-started) with the downloads.
 
 ## P2 — Performance
 
@@ -69,7 +65,7 @@ performance work, and future features. Priorities are not release dates.
 
 ## P2 — Feature proposals
 
-These additions are proposed work, not promises for the first release.
+These additions are proposed work.
 
 | Proposal | Remaining addition |
 | --- | --- |
@@ -99,5 +95,5 @@ Implementation entry points: [music compiler](../tools/content/music.py),
 | Languages | Broader glyph coverage, translated menus, and matching input/search rules. |
 | Accessories and TV output | Physically qualify M25 TV output; add TV output on other backends and support for additional dock/car/remote protocols, radio accessories, and recording. |
 | Hardware variants | Extend support to additional boards, storage adapters, panels, and NOR chips. |
-| Apple interoperability | Expand exact-device database qualification and music/path support. |
+| Apple interoperability | Expand supported Apple media formats and folder/path handling. |
 | Optional expansion | Assess local recommendations, proprietary stock features, protected purchases/Audible, and commercial iPod games separately. Consider macOS/Linux packaging and CD ripping. |

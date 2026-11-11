@@ -1,6 +1,6 @@
 # Wheel Counter
 
-Turn the wheel to fill the screen. Menu exits. The host stores the highest value.
+Turn the wheel to fill the screen. Menu exits. The iPod saves your highest value.
 
 Copy this folder and change the permanent namespaced ID, author, license, title,
 and supported targets in `game.toml`. Sources use only `sdk/include/linnet/`.

@@ -1,7 +1,8 @@
 # Linnet Link
 
 Linnet Link provides USB diagnostics, input, screenshots, RAM boot, and persistent
-OS updates in **development and trace builds**. Release builds exclude it.
+OS updates in **development and trace OS builds**. User OS builds exclude it.
+Classic installation and recovery also use a separate temporary Link connection.
 General library transfers use Disk Mode.
 
 Run commands from the source environment described in the
@@ -39,7 +40,7 @@ python linnet device wait-ready --serial DEVICE_SERIAL --image path/to/os.los --
 `--image` requires the exact running build and SHA-256; omit it to accept any
 healthy development OS on that serial. `--library` additionally requires phase 3,
 error 0. Readiness waits only repeat read-only discovery and status requests.
-The timeout defaults to 60 seconds, with a 600-second maximum. A release image
+The timeout defaults to 60 seconds, with a 600-second maximum. A User OS image
 will not expose Link. Recovery Boot needs prepared, idle storage before persistent
 reboot. RAM boot and install require the image's adjacent device-bound build report.
 

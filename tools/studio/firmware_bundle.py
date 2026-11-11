@@ -26,7 +26,7 @@ CLASSIC_FILES = {'bootstrap/manifest.json'} | {
 PACKAGE_README = """Linnet firmware
 
 Select this entire ZIP in Linnet Media Manager:
-iPod setup > Choose firmware ZIP
+iPod setup > Choose ZIP…
 
 Do not extract the ZIP or choose individual files. Media Manager verifies your
 iPod model and selects the required Linnet bootloader for your installation.

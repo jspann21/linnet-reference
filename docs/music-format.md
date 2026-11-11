@@ -22,6 +22,11 @@ is separate from PODB compilation. Exact limits live in the
 [host compatibility check](../tools/content/music.py) and
 [native decoder](../services/music/decoder.c).
 
+Media Manager also prepares AAC-LC seek checkpoints and FLAC seek metadata on
+the iPod's copies. This preparation is separate from the PODB index; its formats
+and checks are owned by the [AAC preparation tool](../tools/content/aac_index.py)
+and [FLAC preparation tool](../tools/content/flac_index.py).
+
 ## Structure
 
 The database contains a header followed by track, group, membership, search,

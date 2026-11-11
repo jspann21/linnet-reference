@@ -181,9 +181,11 @@ Resolved empty video lists also suppress the playback wake reservation.
 M25 native video startup can reuse validated AAC bytes already read during the
 media scan, transferring them into an empty playback cache after ownership and
 bounds checks. This removes a duplicate read without adding a buffer.
-Completed BCM file-service responses copy up to 512 bytes per service call;
-ring reads retain their 128-byte limit. The complete response must fit before
-copying, and its producer pointer publishes only after every fragment is copied.
+Completed BCM file-service responses copy up to 4 KiB per service call before
+the first LCD video picture and up to 512 bytes during steady playback,
+stopping, recovery, and TV output. Ring reads retain their 128-byte limit. The
+complete response must fit before copying, and its producer pointer publishes
+only after every fragment is copied.
 
 Files keeps two guaranteed cache pages in the unused M25 artwork-bank tail when
 Cover Flow is enabled. A fully loaded resident video catalog can lend its aligned

@@ -30,8 +30,8 @@ PortalPlayer directory planning exposes `plan`, `apply`, and `restore` through
 `python linnet device sram-bootstrap`. Inspect each command's `--help` before
 preparing a developer plan; ordinary users follow Media Manager's prompts.
 Classic release ZIPs include a precompiled bootstrap template. Media Manager
-binds its bounded serial and build fields to the inspected device, then validates
-all hashes before loading it. The smaller User Boot fits in the NOR archive even
+binds the template to the inspected device and validates all hashes before
+loading it. The smaller User Boot fits in the NOR archive even
 when the selected OS is a Developer build. The mounted-volume route for an installed file bootloader is owned by
 [bootstrap.py](../tools/studio/bootstrap.py).
 
@@ -55,7 +55,7 @@ If a Classic restore stops while the SRAM monitor is running, use
 only sectors from the verified installed or original snapshots; unknown or
 partially programmed sectors stop further writes. The original entry sector is
 written last, and a full NOR readback must match before restarting Apple.
-After reconnecting to Apple's USB disk, **Remove Linnet OS** finishes cleanup.
+After reconnecting to Apple's USB disk, **iPod setup → Remove…** finishes cleanup.
 Apple software's normal USB disk connection is sufficient; recovery Disk Mode
 is needed only if the disk does not appear.
 The original backup, installed snapshot, and receipts must remain available.

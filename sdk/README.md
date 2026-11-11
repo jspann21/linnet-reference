@@ -107,7 +107,8 @@ display dimensions.
 | Focus and updates | `focus`, `flags`, and `deps` |
 
 Static strings are printable ASCII. Each scene supports at most 256 nodes,
-16 nesting levels, 64 static labels, and one initial focus. For exact properties,
+16 nesting levels, and one initial focus. Each static `items` or `targets` array
+holds at most 64 entries. For exact properties,
 bounds, flags, and dependencies, see [the parser](../tools/content/tsx.py) and
 [native UI API](../ui/runtime/ui.h).
 
@@ -133,7 +134,7 @@ Themes with `font_source = "apple-podium-sans16"` can use an optional,
 locally extracted [Podium Sans font](assets/PODIUM-SANS-NOTICE.txt); their `font`
 and `font_license` fields describe the bundled fallback. Apple glyphs are not
 stored in the source tree or release packages. Use Media Manager's
-[iPod theme font option](../docs/media-manager.md#ipod-theme-font) to prepare
+[Settings → iPod appearance → Choose font](../docs/media-manager.md#ipod-theme-font) to prepare
 the optional file. Missing or invalid files use the bundled font.
 
 The simulator also accepts `--apple-font path/to/PODIUM.FNT` for local previews.

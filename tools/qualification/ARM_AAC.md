@@ -38,11 +38,12 @@ memory permissions, stack/decoder canaries and callee-saved register checks.
 These are limited corruption checks, not a proof of memory safety or device
 stack use. The emulator uses a separate 64 KiB host scratch stack.
 
-These checks establish consistency within the host execution model. Physical
-device PCM parity, container lead/duration trimming, source/build binding,
-handoff integrity, cache effects and measured startup savings remain required
-before designing or publishing prepared audio for device playback. No prepared
-audio format or playback fallback is enabled by this tool.
+These checks establish consistency within the host execution model. Changes to
+prepared audio also need physical-device PCM parity, container lead/duration
+trimming, source/build binding, handoff integrity, cache behavior and startup
+measurements. Production seek preparation is owned by the
+[AAC preparation tool](../content/aac_index.py); this experiment executes a
+supplied firmware ELF and does not publish media.
 
 The optional corpus tests also exercise the existing three-word recurrence
 checkpoint followed by one discarded predecessor. They reject malformed

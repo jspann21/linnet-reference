@@ -3,7 +3,7 @@
 Start with the [project README](../README.md) for installation, source setup,
 builds, and the simulator. The [hardware reference](hardware.md) lists tested
 devices and features. The [roadmap](roadmap.md) tracks the
-work remaining before release and possible future features.
+verification, performance work, and future features.
 
 ## Using Linnet
 
@@ -15,7 +15,7 @@ work remaining before release and possible future features.
 | [Hardware support](hardware.md) | Tested device configurations, features, and compatibility |
 | [Classic headset remote](headset-remote.md) | Cord buttons, supported Classic revisions, and input diagnostics |
 | [Storage compatibility](storage.md) | Filesystems, disk geometry, storage power, and diagnostics |
-| [Apple OS library updates](apple-stock-music.md) | Qualification and path restrictions for sharing media with Apple's original software |
+| [Apple OS library updates](apple-stock-music.md) | Supported formats and folder requirements for sharing media with Apple's original software |
 
 ## Developing Linnet
 
@@ -23,7 +23,7 @@ work remaining before release and possible future features.
 | --- | --- |
 | [Architecture](architecture.md) | Source map, boot/update model, and runtime services |
 | [SDK](../sdk/README.md) | Build apps, themes, and screens; use the simulator |
-| [Creating games](game-authoring.md) | Proposed game project layout, native interface, host preparation, and performance requirements |
+| [Creating games](game-authoring.md) | Game project layout, native interface, host preparation, and performance requirements |
 | [UI compiler](ui-compiler.md) | Static TSX compilation and the native renderer contract |
 | [Linnet Link](device-link.md) | USB diagnostics, input, captures, RAM boot, and persistent updates |
 | [Classic runtime power](classic-power.md) | Clock selection, idle deadlines, peripheral states, and qualification |
@@ -32,7 +32,7 @@ work remaining before release and possible future features.
 | [Local artifacts](local-artifacts.md) | Build outputs and recovery backups |
 | [Builds and releases](releases.md) | GitHub builds, Windows executable, firmware ZIPs, source archives, and publishing |
 | [Contributing](../CONTRIBUTING.md) | Contribution scope, validation, and issue reports |
-| [Roadmap](roadmap.md) | Release acceptance, known issues, performance work, and feature proposals |
+| [Roadmap](roadmap.md) | Verification, performance work, and feature proposals |
 
 ## Media and binary formats
 

@@ -5,9 +5,9 @@ identifiers, lengths, and limits belong with the encoder and reader, rather than
 a second handwritten specification.
 
 Most records use little-endian integers and CRC32/ISO-HDLC. Each reader enforces
-its own reserved fields and bounds. IPVF has different pixel byte order and CRC
-rules; see its [format guide](video-format.md). Do not assume all headers have the
-same version field or that every reserved field is a version.
+its own reserved fields and bounds. IPVF also stores little-endian RGB565 pixels
+but uses a different CRC; see its [format guide](video-format.md). Do not assume
+all headers have the same version field or that every reserved field is a version.
 
 ## Firmware and state
 
@@ -19,7 +19,7 @@ same version field or that every reserved field is a version.
 | `UPDT`, `HAND`, `RLBK` | Persistent image slots, retained handoff, and failed-candidate information | [Update owner](../services/update/update.c) |
 | `LNPK` | Fixed, reviewed native maintenance package; not arbitrary raw-sector access | [Package builder](../tools/studio/native_package.py), [Photo writer](../targets/photo4g-p98/native_update.c) |
 | `SETT`, `THMS` | User settings; version-six THMS shares theme, scores, brightness and menus in the existing A/B theme records | [Display settings](../services/display/settings.c), [shared host preferences](../tools/studio/device_preferences.py), [storage owner](../services/storage/storage.c) |
-| `MENUS.BIN` / menu envelope | Stable version-three menu IDs, order and shortcuts; legacy file is the startup fallback, shared edits use THMS | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
+| `MENUS.BIN` / menu envelope | Stable version-three menu IDs, order and shortcuts; the file is the startup fallback, shared edits use THMS | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
 | `HIST`, `HPGE` | Redundant paged playback history | [History records](../services/music/history_record.h), [page owner](../services/music/history_pages.c) |
 | `MST3`, `QUEU`, `PROF` | Music queue and sound state | [Music settings](../services/music/settings.c), [queue](../services/music/queue.c), [profile](../services/music/profile.c) |
 
@@ -32,6 +32,7 @@ payload checksum, and full-image hash have distinct meanings.
 | Format | Guide or implementation |
 | --- | --- |
 | `PODB` music index | [Music library](music-format.md) |
+| AAC seek checkpoints and FLAC seek metadata | [AAC producer](../tools/content/aac_index.py), [AAC/M4A reader](../services/audio/aac/m4a.c), [FLAC producer](../tools/content/flac_index.py), [FLAC reader](../services/audio/flac/flac.c) |
 | `LNGM` / `.LGM`, `LNGC` game catalogues | [Package encoder](../tools/content/game_package.py), [native validator](../services/games/package.c), [loader](../services/games/manager.c), [authoring](game-authoring.md) |
 | `GMSAVE0.BIN` / `GMSAVE1.BIN` | Retained identity/schema-bound `STAT` records in fixed cells: [publisher](../tools/content/game_install.py), [save owner](../services/games/saves.c) |
 | RGB565 artwork, `LCF2` / `LCFN` Cover Flow | [Album artwork](artwork.md) |

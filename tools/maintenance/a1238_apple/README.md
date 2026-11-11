@@ -1,9 +1,9 @@
 # Apple database maintenance tools
 
 For ordinary library updates, use [Media Manager](../../../docs/media-manager.md#make-folders-available-in-apple-os).
-This directory contains its native database writers and older A1238 investigation
-tools. The older planners are bound to particular hardware and local artifacts;
-their defaults are not portable examples.
+This directory contains its native database writers and device-bound A1238
+investigation tools. The planners require matching hardware and local artifacts;
+review their assumptions before use.
 
 ## Native writers
 
@@ -16,11 +16,11 @@ The [tool builder](../../studio/apple_tools.py) downloads pinned dependencies,
 verifies them, and supplies the packaged app's helper distribution. Media Manager
 validates device admission and publishes the verified staged output.
 
-## Legacy alias investigation
+## Device-bound alias investigation
 
 `fat_alias_plan.py`, `compact_alias_plan.py`,
-`generate_library_manifest.py`, and `verify_live_aliases.py` supported a
-specific Apple path-length investigation. Review their hardcoded assumptions
+`generate_library_manifest.py`, and `verify_live_aliases.py` inspect
+specific Apple path-length constraints. Review their hardcoded assumptions
 before any reuse. They are not a supported general-purpose alias repair command.
 
 The [journal writer](../a1238_apple_alias_journal.py) applies only an exact,

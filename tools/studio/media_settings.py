@@ -232,12 +232,12 @@ class SettingsWorkspace:
         self.dialog('About Linnet Media Manager',
                     f'Linnet system version: {linnet_version()}\n\n'
                     'Linnet Media Manager helps prepare music, photos, videos, and notes for supported iPods.\n\n'
-                    'Connect your iPod in Disk Mode, choose Refresh or Choose iPod, and use Preparation to review changes. '
+                    'Connect your iPod in Disk Mode, choose Find or switch iPod, and use Preparation to review changes. '
                     'Use Eject safely when finished.\n\n' +
                     ('FFmpeg and FFprobe are included for audio and video conversion. '
                      'Includes FFmpeg and x264 under GPLv3 or later; licenses and matching source accompany the app. '
                      if getattr(sys, 'frozen', False) else
-                     'For audio and video conversion from source, choose your FFmpeg and FFprobe folder in Settings. ') +
+                     'For audio and video conversion from source, choose your FFmpeg and FFprobe folder under Settings > Advanced preparation. ') +
                     'Diagnostics in the footer shows recent errors and exports a privacy-filtered support file.',
                     'Close', cancel=False)
 

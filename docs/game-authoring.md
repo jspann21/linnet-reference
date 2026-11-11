@@ -23,7 +23,7 @@ Change the template's ID, author, license and description. IDs are permanent,
 lowercase ASCII dot names such as `author.game`, at most 63 bytes. Versions and
 device variants share an ID; forks use a new one. Built-in `linnet.*` IDs are
 reserved. The catalogue holds at most 128 games and retains save slots after
-removal. Keep `build.legacy` out of new projects.
+removal.
 
 From the Linnet checkout with development dependencies installed:
 
@@ -61,8 +61,8 @@ inline bulk helpers in [draw.h](../sdk/include/linnet/draw.h). Retain no borrowe
 framebuffer or service pointers beyond their lifetime. Declare
 `capabilities = ["music"]` when needed and release sessions in stop.
 
-Progress is limited to 256 bytes with a positive schema. Read old schemas
-explicitly for migration; write only the current schema. Saves copy buffers
+Progress is limited to 256 bytes with a positive schema. Specify the saved schema
+when reading; write only the current schema. Saves copy buffers
 immediately. Success means accepted into the bounded queue, not durable yet.
 Best scores and progress are bound to the permanent ID and survive removal.
 Handle unavailable storage or a full queue.

@@ -151,7 +151,7 @@ the minimum starting row and maximum ending row; presentation saves the current
 original damage for the next frame. Vendor binaries remain outside the source
 tree. The VMCS display-clear iterator returns its own fixed object at
 0xC000FB50 rather than traversing independently allocated tag-2 elements.
-# Fully resident HDD playback
+## Fully resident HDD playback
 
 The optional 64 MiB clean-cache lease can keep a fully resident LCD video on
 RAM reads while the HDD stays asleep. Admission reuses an owned exact path and
