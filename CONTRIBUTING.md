@@ -2,7 +2,7 @@
 
 Start with the
 [README](README.md) for setup, the [architecture](docs/architecture.md) for the source
-map and [open work](docs/roadmap.md) for known limitations.
+map and [roadmap](docs/roadmap.md) for feature proposals and broader support.
 
 ## Choose a starting point
 

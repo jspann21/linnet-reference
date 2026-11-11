@@ -2,8 +2,8 @@
 
 Start with the [project README](../README.md) for installation, source setup,
 builds, and the simulator. The [hardware reference](hardware.md) lists tested
-devices and features. The [roadmap](roadmap.md) tracks the
-verification, performance work, and future features.
+devices and features. The [roadmap](roadmap.md) lists feature proposals and
+areas for broader support.
 
 ## Using Linnet
 
@@ -32,7 +32,7 @@ verification, performance work, and future features.
 | [Local artifacts](local-artifacts.md) | Build outputs and recovery backups |
 | [Builds and releases](releases.md) | GitHub builds, Windows executable, firmware ZIPs, source archives, and publishing |
 | [Contributing](../CONTRIBUTING.md) | Contribution scope, validation, and issue reports |
-| [Roadmap](roadmap.md) | Verification, performance work, and feature proposals |
+| [Roadmap](roadmap.md) | Feature proposals and broader support |
 
 ## Media and binary formats
 

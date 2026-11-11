@@ -1,69 +1,10 @@
 # Roadmap
 
 Current features and tested devices are documented in the [guides](README.md)
-and [hardware reference](hardware.md). This roadmap tracks verification,
-performance work, and future features. Priorities are not release dates.
+and [hardware reference](hardware.md). This roadmap lists feature proposals
+and areas for broader support.
 
-## P1 — Hardware and distribution checks
-
-- [ ] **Remaining interruption and resource-limit cases.** Check USB loss during
-  publication, interruption points beyond the exercised settings/candidate and
-  photo-grid cuts, interrupted history writes, full disks, malformed/truncated
-  records, and memory pressure. Check Video bus faults beyond the documented
-  clock-loss recovery path. Use the existing
-  [device checks](device-link.md#existing-device-checks).
-
-- [ ] **Brightness and menu sync on hardware.** Qualify immediate brightness,
-  saved brightness/timeout after restart, native menu edits, and Media Manager
-  reconciliation on the supported physical targets. Check startup/menu response,
-  restoring hidden shortcuts, and preservation of Media Manager's game choices.
-  Implementation and host verification are complete.
-  [Controls](navigation.md#saved-customization).
-
-- [ ] **Clean-machine packaging check.** Run the packaged Windows app on a
-  clean computer using the included conversion tools.
-  [Windows distribution](../tools/studio/media_distribution.py).
-
-## P2 — Performance
-
-- [ ] **Large-library cold verification and batch conversion.** Measure large,
-  ready catalogs with empty verification caches, batch conversion throughput,
-  and desktop responsiveness during preparation on rotating and flash storage.
-  [Readiness](../tools/content/media_status.py),
-  [preparation](../tools/content/media_manager.py).
-
-- [ ] **Unindexed AAC and seek edge cases.** Measure playable unindexed M4A,
-  raw ADTS, long files, and rejected-index fallback, including continuity after
-  seeking. Optimize only a demonstrated bottleneck.
-  [M4A reader](../services/audio/aac/m4a.c), [ADTS reader](../services/audio/aac/aac.c).
-
-- [ ] **Concurrent history, artwork, and prefetch at automatic track boundaries.** Attribute
-  controller time and audio reserve when these operations overlap at a gapless join,
-  especially on rotating storage. Tune only if measurements identify starvation
-  or a missed deadline. [Music controller](../services/music/controller.c),
-  [player](../services/music/player.c).
-
-- [ ] **Search latency at 100,000 tracks.** Evaluate the proposed 75 ms goal per
-  storage configuration. Measure first result, visible window, render, and
-  display completion on cold/warm storage and during playback.
-  [Search](../services/music/search.c), [database](../services/music/database.c).
-
-- [ ] **Release-image startup timings.** Compare cold/warm release boots,
-  separating mount, image validation, copy/BSS, resource/display initialization,
-  and first usable frame. [Boot](../boot/src/linnet_boot.c),
-  [runtime](../kernel/runtime.c).
-
-- [ ] **Q21 idle power tradeoff.** Attribute idle wake sources and measure actual
-  current and physical input response on battery versus external power before
-  adjusting clock-switch thresholds. [Q21 manifest](../targets/ipod4g-q21/target.toml),
-  [runtime](../kernel/runtime.c).
-
-- [ ] **Classic decoder buffer use.** Compare cache/frame-buffer use for H.264
-  and MPEG-4 before changing buffer counts or priming thresholds.
-  [Native player](../services/video/native/player.c),
-  [decoder](../services/video/native/decoder.c).
-
-## P2 — Feature proposals
+## Feature proposals
 
 These additions are proposed work.
 
@@ -87,7 +28,7 @@ Implementation entry points: [music compiler](../tools/content/music.py),
 [desktop](../tools/studio/media_desktop.py), and
 [video catalog](../tools/content/video_catalog.py).
 
-## P3 — Broader support
+## Broader support
 
 | Area | Remaining work |
 | --- | --- |
