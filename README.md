@@ -1,239 +1,209 @@
 <a name="top"></a>
 
 <p align="center">
-  <img src="assets/boot-screen.png" alt="Linnet OS — a bird perched on an iPod" width="640">
+  <img src="assets/boot-screen.png" alt="Linnet OS logo" width="640">
 </p>
 
-<h1 align="center">Your iPod. A whole new life.</h1>
+# Linnet OS
 
-<p align="center">
-  Original native firmware. A modern desktop companion. A direct line to the hardware.<br>
-  Built for the music, the click wheel, and everything you still want to make with them.
-</p>
+Linnet is firmware for iPod Photo / Color, iPod Video, iPod classic, and
+fourth-generation monochrome iPods. The project includes a bootloader, kernel,
+on-device interface, Windows Media Manager, USB development tools, and a UI
+simulator.
 
-<p align="center">
-  <a href="#get-started"><strong>Get started</strong></a> ·
-  <a href="#linnet-media">Media Manager</a> ·
-  <a href="#linnet-link">Linnet Link</a> ·
-  <a href="#games">Games</a> ·
-  <a href="#themes">Themes</a> ·
-  <a href="#simulator">Simulator</a> ·
-  <a href="#confirmed-hardware">Hardware</a> ·
-  <a href="#develop-on-windows">Develop</a> ·
-  <a href="#explore-the-project">Docs</a>
-</p>
-
----
-
-Linnet brings a new operating system to classic iPods: music, Cover Flow, photos,
-video, games, notes, and an interface you can make your own. The desktop prepares
-your library. The iPod runs native code. And when you're building something new,
-Linnet Link lets you see and control what is happening on the real device.
-
-**Your computer does the heavy preparation.** Layouts, fonts, artwork, photo
-tiles, and library indexes are compiled or prepared on the host. UI definitions
-become native C before they reach the iPod. Less work at playback time leaves
-the device free to browse, draw, and play within its limited memory and CPU budget.
-
-**Your iPod stays part of the development loop.** Send input, read live state,
-capture its screen, and load a fresh development build over USB. Two-way
-communication through Linnet Link keeps testing close to the hardware, without
-switching to Disk Mode for every iteration.
-
-**An original firmware, from the bootloader up.** Linnet has its own bootloader,
-kernel, services, and interface, built around a native architecture and fixed
-memory budgets. Its UI runs without a JavaScript runtime. Third-party codecs
-and adapted components have their own [credits and provenance](#credits).
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/home.png" alt="Linnet home screen with Music, Cover Flow, Photos, Videos, Notes, Now Playing and Settings" width="320"><br><strong>A familiar wheel. A fresh interface.</strong></td>
-    <td align="center"><img src="docs/images/music.png" alt="Linnet Music menu showing All Tracks, Artists, Albums and Playlists" width="320"><br><strong>Your library, ready to explore.</strong></td>
-  </tr>
-</table>
-
-<sub>Home and Music: native simulator previews with no personal library data.</sub>
-
-## Linnet Media
-
-### One place for your iPod.
-
-The Media Manager handles the desktop side: organize your library, prepare assets,
-install firmware, choose games, and arrange the screens you want on your iPod.
-
-- **Music:** browse songs, albums, artists, and genres; prepare the library and artwork for the device.
-- **Photos and video:** convert media into the formats and sizes your target supports, with preparation progress and caching.
-- **Games and screens:** choose which games are available and customize your menu.
-- **Firmware:** select a prebuilt ZIP, review the detected hardware, and install with backups and a recovery path.
-- **Everyday updates:** add files or folders, prepare the changes, then safely eject. Originals are preserved.
-
-<p align="center">
-  <img src="docs/images/media-manager.png" alt="Linnet Media Manager showing firmware selection, startup software and Apple fallback options" width="960">
-</p>
-
-<sub>Firmware setup in the source version of Media Manager; the optional development build control is visible.</sub>
-
-The packaged Windows app includes its Python runtime and dependencies. Installing
-prebuilt firmware needs **no compiler, no Python setup, and no WSL**. Media
-conversion is included and needs no extra setup. See
-[audio and video preparation](docs/media-manager.md#audio-and-video-preparation).
-
-[Explore Media Manager →](docs/media-manager.md)
-
-## Linnet Link
-
-### Build it. Send it. See it on the real iPod.
-
-Linnet Link is the two-way USB connection between your computer and a running
-development build. The device can report back while you inspect and control it:
-
-| From your computer | Back from your iPod |
-| --- | --- |
-| Send wheel and button input | Observe the resulting UI and firmware state |
-| Request a screen capture | Receive the actual framebuffer, checked for transfer integrity |
-| Exercise playback and device services | Read diagnostics, logs, timing, and counters |
-| Upload a freshly built image | Boot it temporarily in RAM, or install a persistent update |
-
-This workflow **does not require Disk Mode**. Change code, try it on hardware,
-and see the result without a manual file-copy cycle. Temporary RAM boots let you
-try an image without replacing the installed OS.
-
-Link is included in **development and trace builds**. Regular release builds
-leave out the developer transport. Full library transfers still use Disk Mode;
-firmware replacement stops playback and follows the update workflow.
-
-[Use Linnet Link →](docs/device-link.md)
-
-## Games
-
-### The click wheel has more to do.
-
-Eighteen native games bring different kinds of play to iPod Photo and Video, with
-layouts made for their screens and controls made for the wheel.
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/comet-run.png" alt="Comet Run gameplay with a ship, incoming meteors and an active shield" width="280"><br><strong>Comet Run</strong></td>
-    <td align="center"><img src="docs/images/pulse-path.png" alt="Pulse Path with four illuminated sequence pads controlled by the wheel" width="280"><br><strong>Pulse Path</strong></td>
-    <td align="center"><img src="docs/images/solitaire.png" alt="Solitaire with seven tableau columns, a stock pile and four foundations" width="280"><br><strong>Solitaire</strong></td>
-  </tr>
-  <tr>
-    <td>Steer through meteors, time your shield, and chase your best score.</td>
-    <td>Watch the pattern, turn the wheel, and play it back from memory.</td>
-    <td>Draw-one Klondike, wheel navigation, legal-move hints, and undo.</td>
-  </tr>
-</table>
-
-<sub>Actual iPod Video framebuffer captures through Linnet Link.</sub>
-
-The full selection is Comet Run, Pulse Path, Solitaire, Sudoku, Brick, Music
-Quiz, Vortex, Minesweeper, Falling Blocks, Reversi, Snake, Word Search, Scrub,
-Dial Heist, Mixtape, Signal, Clockwork City, and Pocket Pinball.
-Choose your games in Media Manager, save, eject, and restart Linnet.
-
-## Themes
-
-### Make it feel like yours.
-
-Switch themes on the device, with palettes, included fonts, and layouts compiled
-into the firmware. Choose a quiet dark interface, warm Graphite, bright Aurora, or a
-minimal look. **Album Colors** can follow the artwork of the current album across
-the interface.
-
-For the original Apple Podium Sans font in supported color themes, use
-**Media Manager → Settings → iPod theme font → Download and use Apple font**.
-The app downloads verified firmware directly from Apple and extracts the font
-locally. Safely eject and restart Linnet to apply it; public packages include
-a licensed fallback. See [font setup](docs/media-manager.md#ipod-theme-font).
-
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/theme-midnight.png" alt="Midnight theme with a dark blue background and light blue selection" width="280"><br><strong>Midnight</strong></td>
-    <td align="center"><img src="docs/images/theme-aurora.png" alt="Aurora theme with mint accents, a teal sidebar and a clock" width="280"><br><strong>Aurora</strong></td>
-    <td align="center"><img src="docs/images/theme-graphite.png" alt="Graphite theme with charcoal panels and a warm gold selection" width="280"><br><strong>Graphite</strong></td>
-  </tr>
-</table>
-
-<sub>Native simulator previews at the iPod Video's 320 × 240 resolution. Theme availability depends on the target; the monochrome iPod uses its dedicated interface.</sub>
-
-[Build an app or theme →](sdk/README.md)
-
-## Simulator
-
-### Start creating before you plug in.
-
-Preview Linnet's interface on your computer using **the same native renderer and
-compiled UI definitions** used by the firmware. Render screens, replay wheel and
-button events from an input tape, and inspect the resulting frames in a browser.
-
-The simulator produces PNG captures and a report for layout, theme, and input
-work. Timing, sound, USB, and other hardware behavior still need a real iPod.
-The theme previews above were generated with it.
-
-[Run the simulator ↓](#preview-the-interface)
+[Hardware](#confirmed-hardware) · [Installation](#get-started) ·
+[Media Manager](#linnet-media) · [Linnet Link](#linnet-link) ·
+[Games](#games) · [Themes](#themes) · [Simulator](#simulator) ·
+[Development](#develop-on-windows) · [Documentation](#explore-the-project)
 
 ## Confirmed hardware
 
-Linnet supports iPod Photo / Color, iPod Video, iPod classic, and fourth-generation
-monochrome iPods. See [hardware support](docs/hardware.md) for the tested device
-configurations and features.
+| iPod family | Firmware ZIP prefix | Features |
+| --- | --- | --- |
+| Photo / Color | `linnet-photo4g` | Music, photos, prepared IPVF video, Cover Flow, games |
+| Video | `linnet-video5g` | Music, photos, H.264/MPEG-4 video, Cover Flow, games |
+| Classic 6G, 6.5G and 7G | `linnet-classic6g-7g` | Music, photos, native MP4 video, Cover Flow, games |
+| Fourth-generation monochrome | `linnet-ipod4g` | Music and a monochrome interface |
 
-To add another model, start with the [porting guide](targets/README.md).
+The [hardware guide](docs/hardware.md) lists tested models, storage
+configurations, target IDs, and feature limits. Classic requires PATA storage;
+CE-ATA is not supported. See [storage compatibility](docs/storage.md) for disk
+and filesystem requirements.
 
 ## Get started
 
 ### Install a packaged build
 
-> [!NOTE]
-> Release packaging is ready, but downloadable releases have not been published yet.
-> For now, use [the source setup below](#develop-on-windows). Published packages will appear on the [Releases page](https://github.com/jspann21/linnet/releases).
+1. Download **LinnetSetup.exe** and the firmware ZIP for your iPod from
+   [Releases](https://github.com/jspann21/linnet/releases), or use the files
+   from a local build.
+   Choose `-user.zip` for regular use or `-dev.zip` for diagnostics and Linnet Link.
+2. Run the installer and open **Linnet** from the Start menu. The optional
+   `linnet-media-windows.zip` runs without installation after extraction.
+3. Connect the iPod with USB and choose **Find or switch iPod**. If necessary,
+   use the Apple Disk Mode instructions on the **iPod setup** screen.
+4. In **iPod setup**, choose **Choose ZIP…** and select the firmware ZIP without
+   extracting it. Media Manager reads its model and build type automatically.
+   Choose **Install firmware** and follow the prompts. Initial Classic setup
+   includes instructions for entering DFU mode; Media Manager handles the
+   subsequent bootloader and OS installation.
+5. A fresh Classic finishes in Linnet Disk Mode: open **Preparation** to add
+   media, then **Eject safely** to start Linnet. For other installation routes,
+   eject safely to start Linnet, then enter **Settings → USB Disk Mode** on the
+   iPod and reconnect before preparing media.
 
-When release packages are available:
+The Windows installer supports Windows 10 and later with x64 application
+support. The app includes its runtime and media preparation dependencies.
+Prebuilt User and Developer firmware ZIPs work without a compiler, Python
+installation, or WSL.
 
-1. Download **LinnetSetup.exe** and the **`-user.zip` or `-dev.zip` firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
-2. Run **LinnetSetup.exe**, install, and open **Linnet** from the Start menu. The optional portable ZIP can be extracted and run without installation.
-3. Connect the iPod with USB and select **Find or switch iPod**. If it does not appear, **iPod setup** shows how to enter Apple Disk Mode.
-4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager displays the ZIP's build type automatically and selects the required files. User ZIPs are for everyday use; Developer ZIPs include diagnostics and Linnet Link. For a fresh Classic, follow its live button prompt; Link handles the remaining bootloader and OS setup automatically.
-5. Prepare media while connected in Disk Mode, then **Eject safely** to start Linnet.
+Firmware installation checks the connected device, preserves existing media
+and Apple firmware, and saves recovery backups. Device writes require Windows
+administrator approval. See the [installation guide](docs/media-manager.md#install-or-restore-firmware)
+for requirements and recovery instructions.
 
-The native installer preserves the existing media and Apple firmware and saves
-recovery backups. It requests Windows administrator approval for the required
-device writes.
+### Startup selection
 
-### Choose what starts
+Hold **MENU** during startup to open Linnet's boot selection menu. Select
+Linnet, Apple iPod software, or a compatible installed Rockbox image from the
+available entries.
 
-Hold **MENU** while the iPod starts to open Linnet's boot selection menu. Turn
-the wheel to choose **Linnet**, **Apple iPod software**, or a compatible installed
-**Rockbox**, then press the center button to start it. The menu shows the systems
-available on your native Linnet installation.
+To change the default, open **iPod setup → Startup** in Media Manager, choose a
+system under **Start automatically**, and select **Save**.
 
-To change the automatic startup choice, open **iPod setup → Startup** in Media
-Manager, choose a system under **Start automatically**, and select **Save**. You
-can change the default without reinstalling Linnet.
+### Add media
 
-### Add your library
+In Media Manager, open **Music**, **Photos**, **Videos**, or **Notes** and add
+files or folders. Choose **Preparation → Prepare selected media**, then
+**Eject safely** and restart Linnet.
 
-In Media Manager, select **Music**, **Photos**, **Videos**, or **Notes** and add your
-files or folders. Open **Preparation → Prepare selected media**, then **Eject safely** and restart.
+### Remove Linnet
 
-On the iPod, a short **Play/Pause** press toggles playback or a photo slideshow.
-Hold **Play/Pause alone for two seconds** to shut down; the Hold switch locks input.
-
-[Installation, media preparation, and recovery →](docs/media-manager.md)
-
-### Uninstall Linnet
-
-In Media Manager, open **iPod setup → Remove Linnet OS**. This restores the saved
-previous startup software and removes Linnet's system files, settings, and
-prepared libraries. Your **Music**, **Photos**, **Videos**, and **Notes** folders
-remain. Follow the [removal instructions](docs/media-manager.md#reinstall-or-remove-linnet)
+In Media Manager, open **iPod setup**, find **Remove Linnet**, and choose
+**Remove…**. Removal restores the saved previous startup software and removes
+Linnet's system files, settings, and prepared libraries. Original Music, Photos,
+Videos, and Notes folders are kept. Follow the
+[removal instructions](docs/media-manager.md#reinstall-or-remove-linnet)
 for recovery requirements and the Classic's additional steps.
+
+## Linnet Media
+
+Media Manager is the Windows desktop app for firmware installation and media
+preparation. It provides:
+
+- Song, album, artist, and genre views, with library and artwork preparation.
+- Photo and video conversion for the selected device, with progress reporting
+  and reusable computer caches.
+- Game installation and removal, and on-device menu configuration.
+- Firmware installation, startup selection, updates, removal, and recovery.
+
+<p align="center">
+  <img src="docs/images/media-manager.png" alt="Media Manager firmware setup screen" width="960">
+</p>
+
+Media Manager's iPod setup screen with example device information and a User
+firmware ZIP selected. See the [Media Manager guide](docs/media-manager.md).
+
+## Linnet Link
+
+Linnet Link is the USB interface for development and trace builds. It supports
+button and wheel input, framebuffer capture, diagnostics, temporary RAM boot,
+and persistent OS updates. User OS builds exclude this development interface.
+
+Link operates while Linnet is running. Media library transfers use Disk Mode;
+firmware replacement stops playback and follows the update procedure. Temporary
+RAM boot does not replace the installed OS.
+
+See the [Link guide](docs/device-link.md) for commands, image requirements,
+readiness checks, and update behavior.
+
+## Games
+
+Photo, Video, and Classic support 18 native games: Comet Run, Pulse Path,
+Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling Blocks,
+Reversi, Snake, Word Search, Scrub, Dial Heist, Mixtape, Signal, Clockwork City,
+and Pocket Pinball.
+
+Games are separate target-specific native packages. Choose games in Media
+Manager, save, eject, and restart Linnet. See
+[game authoring](docs/game-authoring.md) for the package format, templates,
+controls, and preview tools.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/comet-run.png" alt="Comet Run gameplay" width="280"><br>Comet Run</td>
+    <td align="center"><img src="docs/images/pulse-path.png" alt="Pulse Path gameplay" width="280"><br>Pulse Path</td>
+    <td align="center"><img src="docs/images/solitaire.png" alt="Solitaire gameplay" width="280"><br>Solitaire</td>
+  </tr>
+</table>
+
+Native game previews using the iPod Video's 320 × 240 layout.
+
+## Themes
+
+Supported color targets provide selectable themes and an **Album Colors**
+option that uses colors from the current album's artwork. Theme layouts,
+palettes, and included fonts are compiled into firmware. The monochrome target
+uses its own interface.
+
+Licensed fallback fonts are included. For Apple Podium Sans on supported color
+themes, open **Media Manager → Settings → iPod appearance → Choose font →
+Download and use Apple font**. The app downloads verified firmware from Apple
+and extracts the font on the computer. Eject safely and restart Linnet to apply
+it. See [font setup](docs/media-manager.md#ipod-theme-font) for details.
+
+<table>
+  <tr>
+    <td align="center"><a href="docs/images/home.png"><img src="docs/images/home.png" alt="Linnet theme preview" width="200"></a><br>Linnet</td>
+    <td align="center"><a href="docs/images/theme-midnight.png"><img src="docs/images/theme-midnight.png" alt="Midnight theme preview" width="200"></a><br>Midnight</td>
+    <td align="center"><a href="docs/images/theme-graphite.png"><img src="docs/images/theme-graphite.png" alt="Graphite theme preview" width="200"></a><br>Graphite</td>
+    <td align="center"><a href="docs/images/theme-aurora.png"><img src="docs/images/theme-aurora.png" alt="Aurora theme preview" width="200"></a><br>Aurora</td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/images/theme-sunset.png"><img src="docs/images/theme-sunset.png" alt="Sunset theme preview" width="200"></a><br>Sunset</td>
+    <td align="center"><a href="docs/images/theme-blueprint.png"><img src="docs/images/theme-blueprint.png" alt="Blueprint theme preview" width="200"></a><br>Blueprint</td>
+    <td align="center"><a href="docs/images/theme-album-colors.png"><img src="docs/images/theme-album-colors.png" alt="Album Colors theme preview" width="200"></a><br>Album Colors</td>
+    <td align="center"><a href="docs/images/theme-classic-split.png"><img src="docs/images/theme-classic-split.png" alt="Classic Split theme preview" width="200"></a><br>Classic Split</td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/images/theme-minimal-dark.png"><img src="docs/images/theme-minimal-dark.png" alt="Minimal Dark theme preview" width="200"></a><br>Minimal Dark</td>
+    <td align="center"><a href="docs/images/theme-minimal-light.png"><img src="docs/images/theme-minimal-light.png" alt="Minimal Light theme preview" width="200"></a><br>Minimal Light</td>
+    <td align="center"><a href="docs/images/theme-ipod-photo.png"><img src="docs/images/theme-ipod-photo.png" alt="iPod Photo theme preview" width="200"></a><br>iPod Photo</td>
+    <td align="center"><a href="docs/images/theme-ipod-classic.png"><img src="docs/images/theme-ipod-classic.png" alt="iPod Classic theme preview" width="200"></a><br>iPod Classic</td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/images/theme-classic-cobalt.png"><img src="docs/images/theme-classic-cobalt.png" alt="Classic Cobalt theme preview" width="200"></a><br>Classic Cobalt</td>
+    <td align="center"><a href="docs/images/theme-classic-ember.png"><img src="docs/images/theme-classic-ember.png" alt="Classic Ember theme preview" width="200"></a><br>Classic Ember</td>
+    <td align="center"><a href="docs/images/theme-ipod-mono.png"><img src="docs/images/theme-ipod-mono.png" alt="iPod Mono theme preview" width="160"></a><br>iPod Mono</td>
+    <td></td>
+  </tr>
+</table>
+
+Native simulator captures of all 15 selectable themes. Each preview uses a
+supported iPod layout; theme availability and layout vary by model. Select an
+image to view its native size. See the [UI SDK](sdk/README.md) for screen and
+theme definitions.
+
+## Simulator
+
+The desktop simulator uses the firmware's native renderer and compiled UI
+definitions. It renders screens to PNG, replays wheel and button events from
+input tapes, and generates a browser report. Hardware timing, sound, USB, and
+physical display behavior require testing on an iPod.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/home.png" alt="Home screen simulator preview" width="320"><br>Home screen</td>
+    <td align="center"><img src="docs/images/music.png" alt="Music menu simulator preview" width="320"><br>Music menu</td>
+  </tr>
+</table>
+
+These previews use sample screens without personal library data.
+[Simulator commands](#preview-the-interface) are included below.
 
 ## Develop on Windows
 
-### Clone. Set up. Build in PowerShell.
-
-Install Git and **Python 3.11 or newer**, then run:
+Install Git for Windows and **Python 3.14 x64**, then run:
 
 ```powershell
 git clone https://github.com/jspann21/linnet.git
@@ -244,18 +214,25 @@ python -m venv .venv
 .\.venv\Scripts\python.exe linnet doctor
 ```
 
-Setup downloads and verifies the pinned **LLVM 23.1.2** Windows compiler and builds
-the native Apple database helpers. Development runs directly on Windows, including
-the simulator and Media Manager. **WSL is not required.**
+Setup downloads and verifies the pinned LLVM 23.1.2 Windows compiler and builds
+the native Apple database helpers. Media Manager, firmware builds, and the
+simulator run on Windows without WSL.
 
-Build a regular release OS, using the target ID from the hardware table:
+### Build firmware
 
 ```powershell
 .\.venv\Scripts\python.exe linnet build --target photo4g-p98 --profile release --verify
 ```
 
-Build artifacts go into a unique `out/<profile>/<target>/<kind>/runs/` directory;
-the command reports the resulting paths. Building an image does not install it.
+Use the target ID from the [hardware guide](docs/hardware.md) for other models.
+Build artifacts are written to a unique
+`out/<profile>/<target>/<kind>/runs/` directory. The command reports their paths;
+building an image does not install it.
+
+Linnet's bootloader, kernel, services, and UI use native code and fixed memory
+budgets. Host tools prepare media indexes, fonts, and artwork. Static TSX UI
+definitions are compiled to C; the device has no JavaScript runtime. See
+[architecture](docs/architecture.md) and the [UI SDK](sdk/README.md).
 
 ### Open Media Manager from source
 
@@ -263,11 +240,16 @@ the command reports the resulting paths. Building an image does not install it.
 .\.venv\Scripts\python.exe linnet media
 ```
 
-To install or repeatedly test fresh firmware, enable **Build from source
-(development)** under **iPod setup**. Choose **User build** for regular firmware
-or **Developer build** for Linnet Link and device diagnostics. Media Manager uses
-the same native Windows compiler and binds development builds to the detected iPod.
-Its default installation path uses a selected prebuilt ZIP.
+For media conversion when running from source, install a Windows FFmpeg build
+containing both `ffmpeg.exe` and `ffprobe.exe`. Put them on `PATH` or choose
+their folder under **Settings → Advanced preparation → FFmpeg (source builds)**.
+See [audio and video preparation](docs/media-manager.md#audio-and-video-preparation).
+
+To compile during installation, open **iPod setup → Build from source
+(advanced)**, enable **Compile firmware on this computer**, and choose User or
+Developer firmware. Developer firmware is bound to the detected iPod. Source
+compilation requires the configured compiler; selecting a prebuilt ZIP uses
+that ZIP's recorded build type.
 
 ### Preview the interface
 
@@ -276,78 +258,68 @@ Its default installation path uses a selected prebuilt ZIP.
 Start-Process out/simulator/index.html
 ```
 
-Use your target's `system.toml` to select apps and a default theme. The SDK uses
-constrained TSX compiled ahead of time to native C, with native callbacks for
-behavior. See the [SDK](sdk/README.md) for templates and simulator input tapes.
+Use the target's `system.toml` to select apps and the default theme. The SDK
+contains screen templates and input-tape examples.
 
 ### Build for Linnet Link
 
-Development and trace images require the **actual device serial**:
+Development and trace images require the device serial:
 
 ```powershell
 .\.venv\Scripts\python.exe linnet build --target photo4g-p98 --profile dev --device-serial YOUR_SERIAL --verify
 ```
 
-Replace `YOUR_SERIAL` with the observed serial and select the matching target.
-Start with Media Manager's **Developer build** installation, then follow the
-[Link workflow](docs/device-link.md) for discovery, input, screenshots, RAM boot,
-and persistent updates.
+Replace `YOUR_SERIAL` with the detected device's serial and use its target ID.
+See the [Link guide](docs/device-link.md) for discovery, input, screenshots,
+RAM boot, and persistent updates.
 
-<details>
-<summary><strong>Linux and existing compiler installations</strong></summary>
-
-Install Python 3.11+ and LLVM 23.1.2 (`clang`, `ld.lld`, `llvm-objcopy`, and
-`llvm-nm`) on PATH. Create a virtual environment with `python3 -m venv .venv`,
-install `tools/studio/requirements.txt`, and use `.venv/bin/python linnet` for
-the commands above. Windows `setup` installs the portable compiler automatically;
-Linux developers supply their host toolchain.
-
-Set `LINNET_LLVM_BIN` to an existing compiler's `bin` directory to override tool
-discovery. `doctor` checks the pinned version. The Windows simulator also needs
-the host headers and libraries supplied with LLVM-MinGW.
-
-</details>
-
-<details>
-<summary><strong>Package firmware and the Windows app</strong></summary>
+### Package firmware and the Windows app
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install -r tools/studio/requirements-build.txt
 .\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-user.zip
 .\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-dev.zip
-.\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
 .\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```
 
-Repeat `release bundle` for each supported target. Firmware ZIPs include verified
-release OS and Boot images, including both startup-selector variants. Build the
-Media Manager packages on Windows. The installer and optional portable ZIP both
-include the runtime and dependencies. Installer packaging automatically prepares
-the pinned Inno Setup compiler in portable mode under `out/toolchains/`.
+Repeat the bundle commands for the other targets. Packaging verifies the
+firmware images and includes the User or Developer OS, both bootloader
+variants, and prepared game packages where supported. Classic packages also
+include the initial bootloader bootstrap.
 
-GitHub's **Build downloads** workflow builds the Windows app and all four firmware
-bundles on pushes to `main`, pull requests, and manual runs. Version tags (`v*`)
-also prepare a draft GitHub Release with the downloads, matching source, and
-checksums. See [builds and releases](docs/releases.md) for download contents and
-publishing instructions.
+Windows app packages include the runtime, media preparation tools, and native
+Apple database helpers. FFmpeg and Apple helper sources and licenses accompany
+those components; `linnet-source.zip` provides the matching project source.
+Packaging prepares the pinned Inno Setup compiler under `out/toolchains/`.
+Output files must not already exist.
 
-</details>
+The [GitHub workflow](.github/workflows/build.yml) builds eight firmware ZIPs
+and the Windows app on pushes to `main`, pull requests, and manual runs. Version
+tags (`v*`) also create a draft release with downloads, source, and checksums.
+See [builds and releases](docs/releases.md) for the naming and publishing steps.
+
+For an existing compiler installation, set `LINNET_LLVM_BIN` to its `bin`
+directory. `doctor` checks the pinned version. Linux firmware development
+requires LLVM 23.1.2 on PATH; the desktop app is Windows-only. See
+[bootstrap tooling](docs/bootstrap-tooling.md) for target-specific build and
+installation details.
 
 ## Explore the project
 
-The [documentation index](docs/README.md) lists all user guides and developer
+The [documentation index](docs/README.md) lists user guides and developer
 references.
 
-| I want to… | Start here |
+| Topic | Documentation |
 | --- | --- |
-| Manage media or install and restore firmware | [Media Manager](docs/media-manager.md) · [Storage compatibility](docs/storage.md) |
-| Build an app, theme, or screen | [SDK and templates](sdk/README.md) · [UI compiler](docs/ui-compiler.md) |
-| Talk to a running iPod | [Linnet Link](docs/device-link.md) |
-| Understand the firmware | [Architecture and source map](docs/architecture.md) · [Binary formats](docs/formats.md) |
-| Work on media formats | [Music](docs/music-format.md) · [Photos](docs/photo-format.md) · [Video](docs/video-format.md) |
-| Check a device or storage variant | [Hardware support](docs/hardware.md) |
-| Add another iPod | [Hardware porting guide](targets/README.md) |
-| Contribute or find open work | [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) |
-| Understand generated files and recovery artifacts | [Local artifacts](docs/local-artifacts.md) |
+| Media preparation, firmware installation, and removal | [Media Manager](docs/media-manager.md) · [Storage compatibility](docs/storage.md) |
+| Screens, apps, and themes | [UI SDK](sdk/README.md) · [UI compiler](docs/ui-compiler.md) |
+| Native game packages | [Game authoring](docs/game-authoring.md) |
+| USB development interface | [Linnet Link](docs/device-link.md) |
+| Firmware structure and file formats | [Architecture](docs/architecture.md) · [Binary formats](docs/formats.md) |
+| Media formats | [Music](docs/music-format.md) · [Photos](docs/photo-format.md) · [Video](docs/video-format.md) |
+| Device compatibility and porting | [Hardware support](docs/hardware.md) · [Porting guide](targets/README.md) |
+| Contributions and planned work | [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) |
+| Build outputs and recovery records | [Local artifacts](docs/local-artifacts.md) |
 
 ## License
 
@@ -366,11 +338,10 @@ see the [font and theme notes](sdk/README.md) and the
 
 ## Credits
 
-Linnet's native architecture and application code are developed for this project.
-The firmware also incorporates third-party codecs, libraries, and adapted
+The firmware incorporates third-party codecs, libraries, and adapted
 algorithms, including components sourced through Rockbox. Their licenses and
 origins are recorded in [third-party provenance](third_party/README.md), the
 [SDK's font and theme notes](sdk/README.md), and the
 [game artwork credits](targets/photo4g-p98/README.md).
 
-<p align="center"><a href="#top">Back to top ↑</a></p>
+[Back to top](#top)
