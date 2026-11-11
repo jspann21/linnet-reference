@@ -84,7 +84,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     }
     if(node_scene(n,"linnet.system.about")&&n->text&&!strcmp(n->text,"About detail")&&item!=UINT32_MAX){
         static const char*const details[]={
-            "Linnet OS 0.1.0","Build 4e37dca803b2","Name  My iPod","Device  iPod Classic",
+            "Linnet OS 1.0.0","Build 4e37dca803b2","Name  My iPod","Device  iPod Classic",
             "Model no.  MB147","Board  n25","Apple OS  1.1.2","Family  classic",
             "Region  LL","Serial  8K12345TTXK","USB serial  000000001234TTXK",
             "Disk ID  000000001234TTXK","USB model  Apple iPod USB Device",

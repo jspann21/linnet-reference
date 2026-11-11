@@ -1,6 +1,6 @@
 [system]
 name = "Linnet"
-version = "0.1.0"
+version = "1.0.0"
 target = "classic6g-n25"
 profile = "release"
 

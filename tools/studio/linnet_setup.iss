@@ -11,6 +11,9 @@
 #ifndef AppVersion
   #error AppVersion is required
 #endif
+#ifndef AppVersionNumeric
+  #error AppVersionNumeric is required
+#endif
 #ifndef AppUserModelID
   #error AppUserModelID is required
 #endif
@@ -19,6 +22,10 @@
 AppId=Linnet.MediaManager
 AppName=Linnet
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersionNumeric}
+VersionInfoProductVersion={#AppVersionNumeric}
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 AppPublisher=Linnet contributors
 AppPublisherURL=https://github.com/jspann21/linnet
 DefaultDirName={localappdata}\Programs\Linnet

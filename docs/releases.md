@@ -53,22 +53,22 @@ installation already on the device. Packaging runs image verification and the in
 validation. User OS/Boot images exclude developer tools. Developer ZIPs include diagnostics and Linnet Link; Media Manager binds their firmware to the connected iPod without compiling on the computer. The Classic
 ZIP additionally includes a precompiled bootstrap template; Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
 remaining Link, NOR and native Disk Mode installation steps. See
-[hardware support](hardware.md) for tested configurations and compatibility.
+[hardware support](https://github.com/jspann21/linnet/blob/main/docs/hardware.md) for tested configurations and compatibility.
 
 Firmware and Media Manager packages include licensed fallback fonts. Optional
 Apple Podium Sans is downloaded directly from Apple and extracted on the user's
-computer through [Settings → iPod appearance → Choose font](media-manager.md#ipod-theme-font).
+computer through [Settings → iPod appearance → Choose font](https://github.com/jspann21/linnet/blob/main/docs/media-manager.md#ipod-theme-font).
 Keep that font and the downloaded Apple firmware out of release assets and source.
 
 ## Publish a version
 
 1. Review the successful build from the commit to release. Check the packaged
    Windows app and firmware on the supported devices.
-2. Preserve the [GPLv3 license](../LICENSE), copyright notices, and vendor
+2. Preserve the [GPLv3 license](https://github.com/jspann21/linnet/blob/main/LICENSE), copyright notices, and vendor
    notices, and provide complete corresponding source alongside binaries.
    Confirm redistribution rights for included fonts and other assets before
    public distribution.
-3. Push a version tag such as `v0.1.0` on that commit. This starts a fresh build
+3. Push a version tag such as `v1.0.0` on that commit. This starts a fresh build
    and creates a **draft GitHub Release** containing all downloads and checksums.
 4. Review the draft's downloads and edit its notes to describe that version and
    its hardware limits, then publish it from GitHub Releases.
@@ -99,7 +99,7 @@ Repeat both bundle types for the remaining targets. Classic uses the internal
 target ID `classic6g-n25` and the shared `classic6g-7g` download name. Installer
 packaging downloads and verifies the pinned Inno Setup compiler, then prepares
 it in portable mode under `out/toolchains/`. Its version and checksum are in
-[`config/inno-setup.json`](../config/inno-setup.json). The installed app version
+[`config/inno-setup.json`](https://github.com/jspann21/linnet/blob/main/config/inno-setup.json). The installed app version
 comes from `config/system.toml`. Omit `--installer-output` to build only the
 portable ZIP. Output files must not already exist; choose a fresh output
 directory when rebuilding. Local

@@ -658,6 +658,7 @@ def launch():
     # profile diagnostics as their previews enter and leave the artwork cache.
     QLoggingCategory.setFilterRules('qt.gui.icc.warning=false')
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setApplicationVersion(linnet_version())
     app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setStyle('Fusion'); app.setFont(QFont(UI_FONT, 10))
     window = MediaWindow(); window.show()

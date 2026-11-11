@@ -34,6 +34,11 @@ def create(output, installer_output=None):
         raise ValueError("Media Manager output already exists")
     if output.suffix.lower() != '.zip':
         raise ValueError('The portable Media Manager output must be a ZIP.')
+    version = tomllib.loads((ROOT / 'config/system.toml').read_text(encoding='utf-8'))['system']['version']
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:[-+][A-Za-z0-9.-]+)?', version) if isinstance(version, str) else None
+    if match is None or any(int(part) > 65535 for part in match.groups()):
+        raise ValueError('The system version is not a supported Windows application version.')
+    windows_version = tuple(int(part) for part in match.groups()) + (0,)
     if not all(path.is_file() for path in (ICON_PATH,
             ICON_PATH.with_name('linnet-icon.png'), ICON_PATH.with_name('linnet-setup.png'))):
         raise ValueError('Generate the app icon with: python -m tools.studio.media_icon')
@@ -53,10 +58,23 @@ def create(output, installer_output=None):
     (ROOT / "out").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="media-package-", dir=ROOT / "out") as temporary:
         work = Path(temporary)
+        version_resource = work / 'version.txt'
+        strings = dict(CompanyName='Linnet contributors', FileDescription='Linnet Media Manager',
+            FileVersion=version, InternalName='Linnet Media',
+            LegalCopyright='Copyright (C) 2026 jspann21 and Linnet contributors.',
+            OriginalFilename='Linnet Media.exe', ProductName='Linnet', ProductVersion=version)
+        version_resource.write_text(
+            'VSVersionInfo(ffi=FixedFileInfo(filevers=' + repr(windows_version) +
+            ', prodvers=' + repr(windows_version) + ', mask=0x3f, flags=0, OS=0x40004, '
+            'fileType=0x1, subtype=0, date=(0, 0)), kids=[StringFileInfo([StringTable('
+            "'040904B0', [" + ', '.join('StringStruct(' + repr(key) + ', ' + repr(value) + ')'
+                for key, value in strings.items()) + "])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])])",
+            encoding='utf-8')
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
                    "--onedir", "--name", "Linnet Media", "--paths", str(ROOT),
                    "--distpath", str(work / "dist"), "--workpath", str(work / "build"),
-                   "--specpath", str(work), "--collect-all", "lz4", "--icon", str(ICON_PATH)]
+                   "--specpath", str(work), "--collect-all", "lz4", "--icon", str(ICON_PATH),
+                   '--version-file', str(version_resource)]
         for package in ("mutagen", "Pillow", "pyserial", "lz4", "PySide6",
                         "PySide6_Essentials", "PySide6_Addons", "shiboken6"):
             command += ["--copy-metadata", package]
@@ -112,13 +130,11 @@ def create(output, installer_output=None):
             shutil.copy2(ROOT / "LICENSE", app / "LICENSE")
         installer = None
         if installer_output is not None:
-            version = tomllib.loads((ROOT / 'config/system.toml').read_text(encoding='utf-8'))['system']['version']
-            if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?', version):
-                raise ValueError('The system version is not a supported installer version.')
             installer_dir = work / 'installer'
             command = [str(iscc), '/Qp', '/DPackageDir=' + str(app),
                 '/DOutputDir=' + str(installer_dir), '/DOutputName=' + installer_output.stem,
                 '/DAppVersion=' + version, '/DAppUserModelID=' + APP_USER_MODEL_ID,
+                '/DAppVersionNumeric=' + '.'.join(str(part) for part in windows_version),
                 str(ROOT / 'tools/studio/linnet_setup.iss')]
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
                 encoding='utf-8', timeout=300, creationflags=subprocess.CREATE_NO_WINDOW)
