@@ -47,6 +47,7 @@ def pending(identity):
             value.get('target_id') == identity['target_id'] and
             value.get('linnet_usb_serial') == identity['linnet_usb_serial'] and
             isinstance(value.get('upgrade'), dict)):
+        installer._saved_previous_boot(value)
         return value
     return None
 
@@ -152,7 +153,7 @@ def upgrade(identity, *, build=None, firmware=None, from_source=False,
         raise ValueError('This iPod does not have a verified native Boot upgrade path')
     if build not in ('user', 'dev') or (from_source and firmware is not None):
         raise ValueError('Choose a supported Linnet firmware source')
-    method = reviewed['recovery'].get('installation_method', 'native-preserve')
+    method = reviewed['recovery'].get('installation_method')
     if method not in ('native-preserve', 'native-selector'):
         raise ValueError('The installed Boot method cannot be upgraded here')
     current = reviewed['identity']

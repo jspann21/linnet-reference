@@ -140,6 +140,7 @@ def prepare(device_plan, backup, output, boot_image=None):
         boot_image=Path(boot_image);boot=boot_image.read_bytes();boot_identity=inspect(boot)
         report=json.loads(boot_image.with_suffix('.json').read_text())
         if (report.get('kind')!='boot' or report.get('image')!=boot_identity or
+                report.get('startup_default_format')!=1 or
                 boot_identity['target_id']!=TARGET or
                 report.get('device_serial')!=('' if boot_identity['profile']=='release' else device['serial']) or
                 boot_identity['load_address']!=0x08000000 or len(boot)>0x80000):
@@ -179,7 +180,7 @@ def prepare(device_plan, backup, output, boot_image=None):
                   image_path=str(image_path),image_sha256=_sha(image),result_sha256=_sha(expected),
                   pages=pages,boot_offset=START,boot_limit=END,ram_identity=identity)
         if boot_identity is not None:
-            plan.update(boot_image=boot_identity,startup_default_format=report.get('startup_default_format',0))
+            plan.update(boot_image=boot_identity,startup_default_format=report['startup_default_format'])
         output.parent.mkdir(parents=True,exist_ok=True)
         with before_path.open('xb') as destination:destination.write(current)
         with image_path.open('xb') as destination:destination.write(image)
@@ -251,9 +252,13 @@ def load_prepared(prepared, expected_plan_sha):
     """Reconstruct a NOR installation from its bounded, hash-checked artifacts."""
     prepared=Path(prepared);raw=_read_file(prepared,65536)
     if _sha(raw)!=expected_plan_sha:raise ValueError('NOR plan hash mismatch')
-    plan=json.loads(raw);original=_backup(plan['original_path'],plan['serial'])
-    before=_read_file(plan['base_path'],1048576,exact=1048576) if 'base_path' in plan else original
-    if (len(before)!=len(original) or _sha(before)!=plan.get('base_sha256',_sha(original)) or
+    plan=json.loads(raw)
+    if (not isinstance(plan,dict) or not isinstance(plan.get('base_path'),str) or
+            not isinstance(plan.get('base_sha256'),str)):
+        raise ValueError('NOR plan lacks its transaction base snapshot')
+    original=_backup(plan['original_path'],plan['serial'])
+    before=_read_file(plan['base_path'],1048576,exact=1048576)
+    if (len(before)!=len(original) or _sha(before)!=plan['base_sha256'] or
         before[:START]!=original[:START] or before[END:]!=original[END:]):
         raise ValueError('NOR transaction base differs from its verified snapshot')
     image=_read_file(plan['image_path'],END-START)

@@ -139,6 +139,7 @@ def _context(identity, linnet, transaction, *, cache_scope=None):
             context.get('strategy') != 'native-directory' or context.get('build') not in ('user', 'dev') or
             linnet.get('state') != 'installed' or linnet.get('candidate_pending')):
         raise ValueError('An interrupted native installation cannot be verified in its current state')
+    installer._saved_previous_boot(context)
     method = installer._saved_method(context)
     if method is None or installer.INSTALLATION_METHODS[method]['strategy'] != 'native-directory':
         raise ValueError('The saved installation does not use native firmware recovery')

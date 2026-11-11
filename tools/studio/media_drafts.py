@@ -40,7 +40,7 @@ class DraftWorkspace:
         key = self.choices_key(self.identity)
         try:
             draft = json.loads(self.settings.value(key, '{}'))
-            if not isinstance(draft, dict) or draft.get('version', 1) != 1:
+            if not isinstance(draft, dict) or draft.get('version') != 1:
                 draft = {}
         except (TypeError, ValueError):
             draft = {}
@@ -153,7 +153,7 @@ class DraftWorkspace:
                         ('target_id', 'disk_serial', 'volume_serial')) or
                     not isinstance(draft.get('pending'), list) or
                     not isinstance(draft.get('videos'), list) or
-                    not isinstance(draft.get('outcomes', []), list) or
+                    not isinstance(draft.get('outcomes'), list) or
                     draft.get('video_mode') not in ('all', 'selected', 'none')):
                 return
             for item in draft['pending']:
@@ -176,7 +176,7 @@ class DraftWorkspace:
                         not relative.parts or relative.parts[0].casefold() != 'videos'):
                     continue
                 self.video_selection.add(str(Path(identity['root']) / relative))
-            for row in draft.get('outcomes', []):
+            for row in draft['outcomes']:
                 if (not isinstance(row, dict) or
                         not all(isinstance(row.get(key), str) for key in
                                 ('kind', 'source', 'status', 'reason')) or

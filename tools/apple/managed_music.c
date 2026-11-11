@@ -34,14 +34,13 @@ static unsigned long long number(const char *value) {
 
 int main(int argc, char **argv) {
     managed_arguments(&argc, &argv);
-    if (argc != 5 && argc != 6) {
-        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid [owned-paths.txt]\n");
+    if (argc != 6) {
+        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid owned-paths.txt\n");
         return 2;
     }
-    /* A shared path alone does not establish ownership. Older callers without
-       a saved ownership list preserve every unselected Apple track. */
+    /* A shared path alone does not establish ownership. Use the saved list. */
     GHashTable *owned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    if (argc == 6) {
+    {
         FILE *ownership = g_fopen(argv[5], "rb");
         if (!ownership) {
             perror(argv[5]);

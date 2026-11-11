@@ -145,7 +145,13 @@ def _saved_method(value):
 
 
 def _saved_previous_boot(value):
-    return "rockbox" if (value or {}).get("previous_boot") == "rockbox" else "apple"
+    value = value or {}
+    if value.get("strategy") == "rockbox-file":
+        return "rockbox"
+    previous = value.get("previous_boot")
+    if previous not in ("apple", "rockbox"):
+        raise ValueError("Saved previous startup software is missing or invalid")
+    return previous
 
 
 def _installation_methods(action, rockbox, marker, resume):
@@ -318,7 +324,7 @@ def _resume_context(identity, linnet, *, initialized=True):
             if not matches:
                 continue
             return dict(context, transaction=str(transaction))
-        except (KeyError, OSError, json.JSONDecodeError):
+        except (KeyError, OSError, ValueError):
             continue
     return None
 
@@ -796,7 +802,7 @@ def _validate_artifacts(identity, artifacts):
     expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
     if expected_profile is None or expected_profile != artifacts.get("os_profile"):
         raise ValueError("installer artifact build selection is invalid")
-    boot_profile=artifacts.get('boot_profile',expected_profile)
+    boot_profile=artifacts.get('boot_profile')
     if boot_profile!=expected_profile and not (identity['target_id']=='classic6g-n25' and
             boot_profile=='release' and installation_method=='native-preserve'):
         raise ValueError('Invalid installer Boot profile')
@@ -826,7 +832,7 @@ def _validate_artifacts(identity, artifacts):
                 report.get("build_id") != image_identity["build_id"] or
                 report.get("image", {}).get("sha256") != image_identity["sha256"]):
             raise ValueError("installer build report does not match its image")
-        if kind == "boot" and report.get("boot_selector", "none") != expected_selector:
+        if kind == "boot" and report.get("boot_selector") != expected_selector:
             raise ValueError("installer Boot report uses the wrong startup selector")
         if kind == "boot" and report.get("apple_firmware_fallback") is not True:
             raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
@@ -1493,6 +1499,8 @@ def _read_raw_backup(identity, transaction):
 def _native_worker(job):
     from tools.inspect.retail_device import detect
     from tools.studio import native_bootstrap as native
+    if job["mode"] in ("install", "reinstall"):
+        _saved_previous_boot(job)
     transaction = Path(job["transaction"]).resolve()
     expected = job["identity"]
     detected = detect(expected["root"])
@@ -1666,7 +1674,7 @@ def _native_worker(job):
     marker = _journal(expected, job["artifacts"], "native-directory", transaction,
                       dict(plan=str(plan_path), plan_sha256=plan_sha,
                             firmware_backup_sha256=_sha(firmware.read_bytes()),
-                            installation_method=job.get("installation_method", "native-preserve"),
+                            installation_method=job["installation_method"],
                             previous_boot=_saved_previous_boot(job),
                             apple_firmware=apple_firmware,
                             selector=selector))

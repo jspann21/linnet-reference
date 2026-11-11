@@ -1105,7 +1105,7 @@ class _MetadataCache:
         if pcm:
             if value.get('container') not in ('wav', 'wav-extensible', 'aiff', 'aifc'):
                 return False
-            # Older AIFF cache entries may contain a rounded fractional rate.
+            # AIFF/AIFC metadata must preserve the exact sample rate.
             if suffix != '.wav' and value.get('aiff_rate_exact') is not True:
                 return False
             if value["codec"] not in (1, 2, 3, 4) or value["bits"] not in (8, 16, 24, 32):
@@ -1216,8 +1216,6 @@ class _MetadataCache:
             try:
                 self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_sources "
                     "(path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, checked REAL, digest BLOB, stamp TEXT)")
-                if 'stamp' not in {row[1] for row in self.connection.execute('PRAGMA table_info(embedded_sources)')}:
-                    self.connection.execute('ALTER TABLE embedded_sources ADD COLUMN stamp TEXT')
                 self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_images "
                     "(digest BLOB PRIMARY KEY, value BLOB)")
                 self.connection.execute("DELETE FROM embedded_sources WHERE stamp IS NULL OR checked < ? OR checked > ?",

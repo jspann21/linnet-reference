@@ -101,8 +101,8 @@ def read_details(connection):
         def reconnect_if_needed():
             nonlocal session
             if session.poisoned:
-                # Optional reads may be unsupported by older development
-                # firmware. Continue only on a fresh, verified connection.
+                # A failed optional read poisons the session. Continue only
+                # on a fresh, verified connection.
                 session.close()
                 session, _, observed = connect(serial_number=connection['serial'], deadline_seconds=10)
                 verify(observed)
