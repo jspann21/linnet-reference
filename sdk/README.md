@@ -33,9 +33,17 @@ artifacts, not packages you can copy onto a device to install.
 
 ## Start an app or theme
 
-Copy a template into an unused folder from the repository root:
+An authored app is a static UI screen with optional trusted C canvas callbacks,
+compiled into the firmware. Adding interactive behavior beyond the existing UI
+components requires native firmware code. Built-in screens live in `ui/system/`;
+the compiler also discovers custom screens in `apps/<name>/`. It has no runtime
+app loader or separate application lifecycle.
+
+To create a custom screen or theme, copy a template into an unused folder from
+the repository root. Create `apps/` when starting your first custom screen:
 
 ```powershell
+New-Item -ItemType Directory -Force apps | Out-Null
 Copy-Item -Recurse sdk/templates/app apps/starter
 Copy-Item -Recurse sdk/templates/theme themes/starter
 ```
@@ -46,17 +54,27 @@ The default Photo/reference configuration is the simplest starting point:
 2. Add `local.example.starter` to its ordered `[ui] apps` array. Keep Home first and preserve required destinations.
 3. Set `[ui] theme = "local.example.starter-theme"` if using the theme template.
 4. Add a matching label and destination to the reference Home menu in `ui/system/home/screen.tsx`.
-5. Pass `--system out/starter-system.toml` to compile, simulator, and OS build.
+5. In `tools/studio/menu_definition.py`, append
+   `Item('starter', 'Starter', 'local.example.starter', device_editable=False)`
+   to the Home items and append its zero-based item index to Home's default
+   order. Home uses this menu definition to choose which rows appear; changing
+   TSX alone does not expose a new row. Each menu group supports at most 16
+   items. Saved menu orders override defaults and must also include the new item.
+6. Pass `--system out/starter-system.toml` to compile, simulator, and OS build.
 
-The compiler selects at most 32 apps. Video and Classic already use that limit
-and a complete native screen set; adding an app there needs a compatible screen
-and a deliberate change to the selected set. Do not assume a reference screen
-will be scaled into a native profile.
+The compiler selects at most 64 screens. Targets using native presentation
+profiles also need a matching screen under that profile's `screens/<app-id>/`
+directory and a menu entry in the profile's Home screen. A reference screen is
+not automatically scaled into a native profile. Firmware memory limits still
+apply when adding screens.
 
 Choose unique lowercase dot-separated IDs before sharing an app or theme.
 Update its manifest, system selection, and navigation references together.
-`apps/notes` is the optional **UI Demo**, not the Notes storage service;
-`[features] demo = true` exposes it.
+The optional **UI Demo** is `ui/system/ui-demo`, with ID `linnet.system.ui-demo`.
+Select it in `[ui] apps` and set `[features] demo = true` to enable it for
+previews. To reach it on the device in a custom build, include its item index
+in Extras' default order in `tools/studio/menu_definition.py`. The Notes screen
+is `ui/system/notes`, backed by `services/notes`.
 
 ## TSX essentials
 

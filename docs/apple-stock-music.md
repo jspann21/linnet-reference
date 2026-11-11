@@ -10,16 +10,21 @@ built by `python linnet setup` in a source checkout.
 
 ## Supported boundary
 
-Updates require FAT32 and an exact qualified device/volume match. General target
-support does not enable Apple database writes. The qualification loader and
-admission checks are in [apple_os.py](../tools/content/apple_os.py); device
-identifiers and validation receipts are not documentation examples.
+Media Manager supports Apple library updates on the current Linnet iPod
+families using a writable FAT32 volume:
 
-Qualified specimens include Video MA146, Classic MB147, and monochrome
-MP102/PE435A. The monochrome workflow offers Music only; compatible files under
-`/Notes` are read directly by Apple OS. A matching model alone does not enable
-updates on another device or a reformatted volume. Media Manager checks the
-current identity against the qualification records.
+| iPod family | Folders available in Apple OS |
+| --- | --- |
+| Fourth-generation monochrome | Music |
+| Photo / Color | Music, Photos |
+| Video | Music, Photos, Videos |
+| Classic 6G, 6.5G and 7G | Music, Photos, Videos |
+
+The app verifies the connected device and volume before writing. Classic also
+requires its Apple device identifier for the library checksum; reconnect in
+Apple Disk Mode if the app asks for it. Supported sector sizes are 512, 2048,
+and 4096 bytes. The checks are in [apple_os.py](../tools/content/apple_os.py).
+Compatible plain-text files under `/Notes` are read directly by Apple OS.
 
 The managed writer stages and verifies updates, preserves existing Apple entries
 and playlists, and retains backups. Selected folder contents remain in their
@@ -32,14 +37,9 @@ It uses real FAT short aliases and a lowercase `.mp3` suffix in Apple's
 database. The relative path below `/Music` must fit 23 characters. Long filenames
 alone do not determine whether their aliases fit.
 
-A track appearing in Apple's menu does not prove playback: qualification must
-confirm that it opens, its timer advances, and audio is audible.
-
 The normal update workflow reports unsupported paths without renaming originals
-or rewriting FAT directories. Historical alias-repair tools are
-[device-specific maintenance tools](../tools/maintenance/a1238_apple/README.md),
-not a general import requirement. Alias changes require revalidation and rebuilt
-indexes in both operating systems.
+or rewriting FAT directories. Keep filenames and aliases unchanged after
+preparing the libraries, or prepare and update them again.
 
 See [managed music](../tools/maintenance/a1238_apple/managed_music.c) and
 [managed photos](../tools/maintenance/a1238_apple/managed_photos.c) for the writers.

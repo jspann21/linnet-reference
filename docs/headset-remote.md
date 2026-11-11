@@ -23,11 +23,10 @@ uses center for play/pause and double/triple clicks for ten-second forward/back
 seeks. Commands work in menus and with Hold locked. Unplugging discards pending
 clicks and held keys. Microphone recording is separate work.
 
-## Hardware interface and provenance
+## Hardware interface
 
-This is an original Linnet implementation; it incorporates no Rockbox source.
-Hardware facts come from the author's
-[Mikey reverse-engineering measurements](https://terminalbytes.com/reverse-engineering-ipod-classic-mikey-chip/):
+The controller interface is described in
+[Mikey controller reverse engineering](https://terminalbytes.com/reverse-engineering-ipod-classic-mikey-chip/):
 I2C bus 0, on-wire write address `0x72` (HAL seven-bit address `0x39`);
 register 0 mode `0x2f` (reserved readback bits are masked);
 register 4 center indications; register 5

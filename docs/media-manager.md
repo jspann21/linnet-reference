@@ -1,548 +1,285 @@
 # Linnet Media Manager
 
-Manage libraries, firmware, games, and screen menus from Windows. For packaged
-installation and source setup, start with the [main README](../README.md#get-started).
+Media Manager is the Windows app for installing Linnet, preparing media, and
+managing your iPod. Download **LinnetSetup.exe** and the firmware ZIP for your
+model from [Releases](https://github.com/jspann21/linnet/releases). Run the
+installer, then open **Linnet** from the Start menu. The optional portable ZIP
+runs after extraction.
 
-Use **LinnetSetup.exe** for the standard Windows installation, then open
-**Linnet** from the Start menu. The optional portable ZIP runs after extraction.
-See [builds and downloads](releases.md) for installation and desktop removal.
+[Install firmware](#install-or-restore-firmware) ·
+[Add media](#prepare-your-library) ·
+[Playlists and games](#playlists-games-and-screens) ·
+[Font and storage](#ipod-theme-font) ·
+[Firmware updates](#update-firmware-and-startup-settings) ·
+[Remove Linnet](#reinstall-or-remove-linnet) ·
+[Troubleshooting](#troubleshooting)
 
-The packaged app includes everything needed for media preparation. Prebuilt
-firmware installation needs no compiler or WSL. No extra setup is needed for
-audio and video conversion.
+## Connect your iPod
 
-## Will this iPod work?
+Connect with USB and choose **Find or switch iPod**. The first read can take
+longer for a large collection; progress appears in the activity area. Wait for
+it to finish, or choose **Stop** to cancel.
 
-**iPod setup** identifies your iPod and shows whether installation is available.
-Setup checks the device before writing. See [tested models](hardware.md) and
-[storage requirements](storage.md); Classic CE-ATA drives are not supported.
+Media preparation needs **Disk Mode**. If Linnet is running, choose **Open Disk
+Mode** in Media Manager when offered. Otherwise, open **Settings → USB Disk
+Mode** on the iPod and reconnect. For an iPod without Linnet, follow **Enter
+Apple Disk Mode** on the app's **iPod setup** screen.
 
-Media Manager retries a timed-out identity check once; identity rejections still
-stop setup. If Windows has not finished checking the iPod after those attempts,
-wait a few seconds and choose **Find iPod** again. If detection still fails, enter Disk Mode, try a direct USB
-port, and follow the message shown. Save a hardware report if you still need help.
-When a report recognizes a mounted iPod after discovery failed, closing the report
-retries normal discovery and refreshes setup status.
-
-### Send a hardware report
-
-1. Open **iPod setup → Save hardware report…**.
-2. Review it, then **Save report…** or **Copy report**.
-3. Choose **Contact Linnet support**, describe the problem and any storage changes,
-   and attach or paste the report in the GitHub issue.
-
-Reports contain hardware and connection details, excluding serial numbers,
-usernames, local paths and media. Collection is read-only; nothing uploads
-automatically. GitHub issues and attachments are public and show your account.
-Some hardware details require further checks outside Apple Disk Mode.
-
-From source:
-
-```console
-python linnet hardware-report --output linnet-hardware-report.json
-```
-
-## Take an iPod screenshot
-
-When your iPod is running a **Developer** or **Trace** build through Linnet Link,
-choose **Screenshot…** in the device card at the bottom of the sidebar. The
-preview offers **Copy image** to paste into another app and **Save PNG…** to
-choose a file on your computer. Copy and Save also support Ctrl+C and Ctrl+S.
-
-Screenshots capture the iPod's native screen pixels. They require a running OS
-with Linnet Link; the button is disabled in Disk Mode, recovery, and User builds.
-The image remains available in the preview if the iPod disconnects.
-
-## Audio and video preparation
-
-The installer and portable app include FFmpeg and FFprobe and use them
-automatically. There is no setup step in Settings. If preparation reports that
-its components cannot start, reinstall Linnet or extract a fresh portable ZIP.
-
-FFmpeg converts video and unsupported audio on the computer before the prepared
-files are copied to the iPod. FFprobe checks codecs, duration and compatibility;
-some music metadata and FLAC preparation also use it.
-
-When running Media Manager **from source**, supply your own Windows FFmpeg build
-with `ffmpeg.exe` and `ffprobe.exe` together, usually in its `bin` folder. Commands
-on `PATH` are detected automatically, or choose **Settings → Advanced preparation →
-FFmpeg (source builds) → Choose folder…**. Both executables must pass their startup check. CLI conversion
-commands also accept explicit `--ffmpeg` and `--ffprobe` paths.
-
-Windows packaging builds pinned FFmpeg and x264 sources using the project’s LLVM
-toolchain, Git for Windows, NASM and pkgconf. Run `python linnet setup`, then
-`python -m tools.studio.conversion_tools` to build the tools independently.
-Packaging includes both executables, their license notices, complete matching
-source archives, dependency checksums and the build script under
-`_internal/conversion-tools`. The conversion executables can be replaced with
-compatible modified versions. The build enables GPLv3 and libx264, excludes
-nonfree components, and does not patch either project's source.
+**iPod setup** identifies the device and explains any installation requirements.
+See [supported hardware](hardware.md) and [storage compatibility](storage.md).
+Classic CE-ATA drives are unsupported.
 
 ## Install or restore firmware
 
-1. Connect the iPod with USB and choose **Find or switch iPod**. If it does not
-   appear, **iPod setup** shows the Apple Disk Mode button sequence.
-2. Open **iPod setup**, above **Preparation** in the sidebar. Check the connected
-   device and setup status first. If an installation prerequisite is missing,
-   the page explains it before offering firmware or build choices.
-3. When installation is available, choose **Choose firmware ZIP** and select the
-   whole ZIP **without extracting it**. Choose `-user.zip` for everyday use or
-   `-dev.zip` for diagnostics and Linnet Link. Media Manager displays the verified
-   iPod model, build type, and version from the ZIP automatically.
-4. Choose a startup method when there is a choice, then install. A fresh Classic finishes connected in Linnet
-   Disk Mode: open **Preparation** to add media or **Eject safely** to start Linnet.
-   For other installation routes, eject safely to start Linnet, then enter Linnet
-   Disk Mode and reconnect before preparing media. Existing
-   installations also show default startup and removal options below the
-   installation controls.
+1. Download the ZIP for your iPod: choose `-user.zip` for everyday use or
+   `-dev.zip` for diagnostics and Linnet Link. Classic 6G, 6.5G and 7G share the
+   `classic6g-7g` download.
+2. Open **iPod setup → Choose ZIP…** and select the whole ZIP without extracting
+   it. Check the model and build type displayed by the app.
+3. Choose **Install firmware**, review the prompts, and allow Windows
+   administrator approval when requested. Keep USB connected until setup finishes.
+4. Prepare your media, then choose **Eject safely** to start Linnet. A fresh
+   Classic finishes in Linnet Disk Mode, ready for preparation. For other
+   installation routes, eject to start Linnet, then enter **Settings → USB Disk
+   Mode** on the iPod and reconnect before preparing media.
 
-**Advanced source options** is for development on a configured Linnet source
-checkout. Enable **Build from this source checkout**, then choose User or
-Developer. This compiles firmware on the computer and requires the configured
-compiler. The installed app explains why this option is unavailable; both User
-and Developer ZIPs work there without Python or a compiler. Returning to ZIP
-mode restores the build type recorded in the selected ZIP. Interrupted installs
-resume using their saved firmware and build type.
+For a first Classic installation, the app asks you to turn Hold off and hold
+**Menu + Select** for about 12 seconds. Release when the app tells you to. The
+remaining restarts are automatic. If interrupted, reconnect the same iPod and
+choose **Resume Classic installation**. Other interrupted installations offer
+**Resume installation**.
 
-On a supported native Boot installation, **Default startup** chooses which
-installed system starts automatically. Hold **MENU** while the iPod starts to
-open the selector and choose a different installed system. The default can be
-changed without reinstalling Linnet. **Update startup selector** replaces Boot
-while keeping the saved Apple firmware and recovery plan. Finish an interrupted
-update with **Resume startup selector update** before making other setup changes.
-
-Firmware installation requires a recognized target, matching USB and mounted
-storage identities, and a writable FAT32 iPod volume. Unknown devices and firmware
-for another target are rejected. The installer rechecks the connected device and
-installation method before writing; the elevated worker also revalidates the
-firmware after administrator approval. Selecting a ZIP cannot override these
-checks. Photo P98, monochrome Q21, and Video M25 use native directory
-installation. Classic N25 uses Media Manager's integrated NOR bootloader setup.
-Removal appears only when Linnet files or a recovery record are present, or
-interrupted removal can be completed.
-
-If an iPod is detected over USB but Windows has not mounted its storage,
-**iPod setup** shows the storage problem even when another iPod is connected.
-Assign the existing volume a Windows drive letter, then choose **Find iPod**.
-
-### First installation on a Classic
-
-Choose a current Classic firmware ZIP and **Install Linnet**. The ZIP includes
-the temporary bootstrap, so packaged installation needs no compiler.
-Media Manager saves the selected firmware and the current USB and disk identity,
-safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
-Release the buttons when Media Manager detects DFU and tells you to release.
-Keep USB connected throughout; subsequent restarts are automatic.
-If setup fails through a hub or dock, connect the same iPod directly and choose
-**Resume Classic installation**. If prompted, assign its existing FAT32 volume
-a drive letter in Windows Disk Management.
-These live hold/release instructions appear in a focused dialog that advances
-automatically. Turn the Hold switch off before following them.
-
-When Linnet Link is already connected, Media Manager recognizes the running OS
-or recovery connection. Choose **Open Disk Mode** in **iPod setup** to reconnect
-storage automatically. A saved, unfinished Classic setup instead offers **Resume Classic
-installation** for that device. During a hosted recovery connection, the iPod
-directs you to continue setup on the computer.
-
-For a running OS, iPod setup shows its build and offers **Read startup settings**
-and **Change build…**. These actions connect Disk Mode automatically, read the
-installed software, and open the selected controls. The **Startup** card shows
-the verified saved default in **Start automatically**, with **Save** beside it,
-and explains holding Menu for a one-time startup choice. The **Linnet** card shows
-the installed build. Choose **Change build or reinstall…** to open its build and
-firmware controls; first installations and interrupted setups open these controls
-automatically. Choose a matching User or Developer firmware ZIP, or compile from a configured
-source checkout using Advanced source options. Pending updates show which
-build is ready to start and ask you to eject safely. Media is kept.
-
-Linnet Link then checks RAM, panel initialization, disk identity and partition
-access, reads and independently verifies the original NOR backup, authenticates
-the replacement on that device, and verifies the complete flash after writing.
-Unsupported RAM, storage or NOR layouts stop setup before flashing. It reconnects
-through Linnet Disk Mode, preserves Apple startup and portable recovery files,
-and installs and verifies the OS. The iPod stays mounted so you can prepare media
-without another reboot. A successful automated check does not establish physical
-LCD appearance, controls, audible output or battery runtime.
-
-If interrupted, use **Resume Classic installation** in iPod setup. The saved
-transaction keeps the exact firmware, device identity, original flash and write
-receipts. Media Manager rechecks those records and the connected device before
-continuing; uncertain writes are not retried automatically. Source installations
-use the smaller User Boot with either User or Developer OS to fit the NOR archive.
-
-| Startup method | Behavior |
-| --- | --- |
-| Existing Rockbox bootloader | Reversibly replaces the loader's firmware file and retains its predecessor for restoration. |
-| Native Linnet with Apple fallback | Boots Linnet directly. Hold **MENU** during power-on to choose the preserved Apple OS. Existing Rockbox files remain dormant. |
-| Native startup selector | Adds a compatible Rockbox image to the native chooser alongside Linnet and Apple OS. |
-
-Fresh installations default to native Linnet, including when a Rockbox bootloader
-is installed. A verified compatible Rockbox image is kept available in the native
-startup chooser; otherwise Linnet uses Apple fallback. Reinstalls and resumes
-retain their saved method. You can explicitly select the existing Rockbox loader
-when it is available.
-
-Only methods valid for the detected installation are available. Detection of
-iPodLinux or other files does not imply a supported boot path.
-
-Native installation requests Windows administrator approval for device writes.
-It preserves media, partitions, and the original Apple payload, and saves
-recovery backups under `%LOCALAPPDATA%/Linnet/Installer`. Firmware hashes provide
-integrity checks, not signature authentication.
-
-### Reinstall or remove Linnet
-
-**Fresh reinstall** uses the saved recovery record, replaces system files, and
-retains settings and prepared media. **Restore previous boot** restores the
-recorded predecessor while leaving Linnet files and media in place. **Remove
-Linnet OS** in **iPod setup** restores and verifies the saved previous startup
-software, then removes the `.LINNET` system directory, including Linnet settings
-and prepared libraries. The Music, Photos, Videos, and Notes folders remain.
-The previous startup software is Apple OS when the verified recovery record
-identifies Apple, or Rockbox when the iPod was installed using its loader. Media
-that was prepared only for Linnet may need an Apple library sync before it appears
-in Apple OS. Removal is unavailable without a verified recovery record.
-Restore or empty Media Manager Trash before removal, since it can contain
-original media files. Choose **Remove…** to review removal. If Trash contains
-items, the confirmation offers **Review Trash** or **Empty Trash and remove
-Linnet**. Continuing permanently empties Trash before removing Linnet.
-If the iPod has restarted since removal was reviewed,
-Media Manager reconnects the same board through Linnet Link and checks its FAT
-volume and disk geometry again before restoring startup software. A failed
-removal clears the old connection; choose **Find iPod** to review it again.
-Photo, monochrome, and Video iPods can restore through Linnet's native Disk Mode
-when the verified original installation or completed startup upgrade record matches.
-Otherwise, reconnect in Apple Disk Mode so the saved backup can be matched to
-the original storage identity. Removal reports recovery checks, startup
-restoration, backup verification, and system-file cleanup in the activity area.
-
-Classic A1238/N25 installations use a separate NOR flash bootloader. Media
-Manager recognizes their completed bootstrap records and verified original NOR
-backups. OS updates preserve portable recovery copies under `.LINNET/RECOVERY/NOR` and on
-the computer. Reinstalling the OS cannot recreate a missing original NOR backup.
-For Classic removal, connect in Linnet Disk Mode with a Developer build that
-provides Linnet Link. Media Manager saves recovery, ejects the disk, enters the
-SRAM monitor, authenticates the backup with the device, and compares the entire
-flash against the saved snapshots. It restores only the original boot slot,
-verifies the complete NOR, and restarts into Apple software before removing
-Linnet files. Restoration, reconnection, and cleanup run in the same removal
-operation; keep USB connected through the restarts. Media Manager allows three
-minutes for a fresh, verified Apple disk mount and continues cleanup
-automatically. Starting in Apple iPod software is expected. Its USB disk must also
-mount in Windows before Linnet’s files can be removed. The normal USB disk
-connection while Apple iPod software is running is sufficient; the button sequence
-for recovery Disk Mode is only a fallback if the disk does not appear. If Windows
-has not mounted it, a dialog guides reconnection and that fallback: turn Hold off, hold Menu + Select until the
-Apple logo appears, then immediately hold Select + Play/Pause until Disk Mode
-appears. A verified restoration is not repeated when only file cleanup remains.
-If the wait expires, reconnect this same iPod's Apple USB disk, choose **Find
-iPod**, then **Remove Linnet OS** again to finish cleanup. User builds need a
-Developer build before this Link recovery sequence; the original NOR backup
-remains the source of restoration.
-If Apple is the saved startup default, removal first selects Linnet for its
-automatic recovery restart. If recovery stops, Linnet remains selected so Link
-can reconnect for a retry. Removal holds exclusive access to this Classic
-through its restarts and verifies the recorded recovery monitor before flashing.
-If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
-again. Media Manager matches its host recovery copy to that iPod and resumes
-the removal. After deleting the system files, it briefly rechecks the folders
-while Windows finishes processing deletion. These checks do not repeat file
-deletion or flash restoration. Newly appearing media folders are kept, and
-cleanup errors report the failed check without asking for another Disk Mode restart.
-Keep the matching backup and receipt; restoration cannot be inferred from files
-merely remaining on the disk.
-An OS-only Link update does not replace Boot or add a newer startup chooser.
-
-From a configured source checkout, equivalent commands are:
-
-```console
-python linnet installer inspect --mount X:/
-python linnet installer install --mount X:/ --firmware path/to/firmware.zip
-python linnet installer restore --mount X:/
-python linnet installer uninstall --mount X:/
-```
-
-Replace the drive and file placeholders with the inspected device and package.
-
-### Fresh development builds
-
-Run Media Manager from source and enable **Build from source (development)**.
-**User build** creates regular firmware; **Developer build** adds device-bound
-diagnostics and [Linnet Link](device-link.md). Both use the native compiler
-installed by `python linnet setup`.
-
-The CLI equivalent is `installer install --mount X:/ --from-source`; add
-`--build dev` for development. The default app workflow uses a prebuilt ZIP.
+Setup preserves existing media and Apple firmware and saves recovery backups.
+Keep those backups for removal or recovery; their location is listed under
+[Computer storage](#computer-storage-settings).
 
 ## Prepare your library
 
-Preparation needs Disk Mode to read and write media. If your iPod is connected
-through Linnet Link, choose **Preparation → Open Disk Mode** and keep USB connected.
-Media Manager reconnects storage and reads the libraries automatically. If Disk
-Mode is unavailable, the connection notice directs you to **iPod setup**.
-
-If you need the same files in Apple's original OS, check **Preparation →
-Available in Apple OS** before copying media. That update is limited to the
-exact qualified FAT32 devices and file paths described below.
-
-1. Browse **Music**, **Photos**, **Videos**, or **Notes** and add files or folders.
+1. Connect the iPod in Disk Mode.
+2. Open **Music**, **Photos**, **Videos**, or **Notes** and add files or folders.
    Adding to the queue does not copy files yet.
-2. Open **Preparation**, select the media types to update, and review video choices.
-3. Choose **Prepare selected media**, review the plan, and start.
-4. Review skipped files or errors, then **Eject safely** and restart Linnet.
+3. Open **Preparation**, select the media types to update, and review the video
+   choices. Choose **Prepare selected media**.
+4. Review the plan, including space requirements and changes to existing files.
+   Choose **Start preparation**, or **Approve changes and prepare** when shown.
+5. Review any skipped files or errors, then choose **Eject safely** and restart
+   Linnet.
 
-The preparation review counts videos separately from file copies. Videos are
-prepared for the selected iPod and saved for Linnet playback; a queue containing
-only videos does not need any other file copies. Space budgets include temporary
-files and recovery copies, so they can exceed the final media size. **Show details**
-lists queued sources and conversion information. Changes to existing iPod content
-are always shown for review before approval.
-
-| Media | Current behavior |
+| Media | What preparation does |
 | --- | --- |
-| Music | Indexes original audio and prepares artwork; up to 100,000 tracks. Playback depends on the target's native decoders. Artwork is 64 pixels on Photo/4G. Video/Classic use a 160 px cover with exact Now Playing renditions (112 px, plus 126 px on Classic) and native 130 px Cover Flow art. |
-| Photos | Prepares orientation-correct thumbnails and tiled RGB565 images through Pillow. Up to 65,535 photos; default zoom dimension 640 pixels, optionally 2048. |
-| Videos | Validates existing compatible video or converts for the selected target. Photo uses IPVF; Video and Classic use native MP4 backends. See [formats and limits](video-format.md). |
-| Notes | Prepares plain text from UTF-8 or BOM-marked UTF-16 text/Markdown files. Up to 256 notes, 63-character titles, and 256 wrapped lines per note. |
+| Music | Builds the song library and album artwork; converts unsupported audio when enabled. |
+| Photos | Creates thumbnails and photos sized for the iPod. |
+| Videos | Checks compatible files and converts others for the selected model. |
+| Notes | Prepares text and Markdown for the reader; Markdown appears as plain text. |
 
-Each preparation also updates **Files**, the device's browser for the mounted
-disk. Media Manager sorts directories, resolves FAT names, prepares native-size
-image previews, and wraps text for the target's fonts on the computer. It connects
-source videos to their existing prepared copies. Unchanged image/text conversions
-reuse the host cache; previews are copied before the directory index is published.
-Packed Video artwork includes a separately checked block index so compatible
-firmware can prepare visible covers while the remaining set loads.
-The device reads bounded pages as you browse. Right in Files shows the live folder
-when files have changed since preparation. See [Files](files.md) for controls,
-supported opening behavior, and limits.
+Available features depend on the iPod. Preparation also updates the on-device
+**Files** browser. See [device controls](navigation.md), [Files](files.md), and
+[video formats](video-format.md) for playback details.
 
-Music uses actual FAT short aliases; verified compatibility copies handle
-unsupported paths without changing originals. Notes wrap for the target's fonts;
-Markdown is displayed as text. Photo and video features are unavailable on Q21.
+Preparing Music also includes compatible tracks that iTunes already copied to
+the iPod. To make files from `/Music` available in Apple software too, use
+[Available in Apple OS](#make-folders-available-in-apple-os).
 
-Search with **Ctrl+F**, refresh with **F5**, and use **Clear filters** to reset a
-search. Enter opens a group or file details. **Show in folder** opens a file's
-location. Queue removal leaves source files intact.
+Queue choices are saved for each iPod. After changing source files, prepare the
+affected media again; unchanged work is reused. Replacements and library
+removals appear for review before approval. Space estimates include temporary
+files and recovery copies, so they may exceed the final media size.
 
-Queue choices are retained per device. Completed work is reused after an
-interruption; unfinished or missing sources remain visible. During preparation,
-**Stop** takes effect at a safe operation boundary. The preparation report records
-completed, skipped, and failed work. During device search or library scanning,
-**Stop** interrupts the reader and its storage queries, discards partial results,
-and releases the window for another action. If iTunes is syncing the iPod, stop
-reading and let the sync finish before choosing **Refresh**. The app does not
-restart a stopped scan automatically. If an iTunes music, photo, or artwork
-database is locked or changes during reading, the scan stops with a message to
-finish syncing and refresh. Preparation planning honors **Stop** during folder
-scans and video checks, including space estimates. If a completed scan finds an
-interrupted media-index update, the app keeps the blocked recovery state so it
-can be reviewed before another device action.
+**Stop** cancels at a safe point. To review results, open **Preparation → More →
+View preparation details**. Use **Review skipped files…** to retry repaired
+sources. Search the library with **Ctrl+F** and refresh it with **F5**.
+
+### Audio and video preparation
+
+The installed and portable apps include FFmpeg and FFprobe for conversion and
+media checks. They work automatically. If these components cannot start,
+run **LinnetSetup.exe** again or extract a fresh portable ZIP.
+
+**Settings → Media preparation** controls photo detail, conversion of
+unsupported music to WAV, and online artwork lookup. Higher photo detail uses
+more space and takes longer to prepare.
 
 ## Playlists, games, and screens
 
-After preparing Music, open **Music → Playlists** to create a playlist, search
-the prepared song library, add songs, and arrange their playback order with
-**Up**, **Down**, **Move to top**, and **Move to bottom**. Choose **Save to iPod**,
-then eject safely. A device holds up to **16 playlists**, each with up to
-**1,024 song entries**. Names can use
-1–31 UTF-8 bytes; a character outside ASCII may use more than one byte.
-Missing tracks are shown in the editor so you can remove or replace their
-entries. Changes in the editor take effect only when you choose **Save to iPod**.
+### Playlists
 
-**Import M3U…** reads a UTF-8 `.m3u` or `.m3u8` file and creates a new playlist.
-Review matched and unmatched entries before choosing **Import matched songs**;
-unmatched or ambiguous entries are skipped, and the imported playlist still
-needs **Save to iPod**. Import is blocked when 16 playlists already exist or
-more than 1,024 songs match. Files above 2 MiB or 10,000 entries are rejected.
-**Export M3U…** writes the selected playlist in its current order as UTF-8
-M3U text. If a track is missing from the prepared library, export reports it
-instead of writing an incomplete playlist.
+After preparing Music, open **Music → Library actions → Playlists…**. Create a
+playlist, add songs, and arrange their order. Choose **Save to iPod**, then
+eject safely. Playlists support up to 16 lists with 1,024 songs each.
 
-On Photo, Video, and Classic, **Games** lets you choose from Comet Run,
-Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
-Blocks, Reversi, Snake, Word Search, Scrub, Dial Heist, Mixtape, Signal,
-Clockwork City, and Pocket Pinball. Each game has its own on-device controls and
-best score. The Photo uses artwork drawn for its 220 × 176 display; Video and
-Classic use artwork drawn for 320 × 240.
-Games are independent target-specific `.LGM` packages. Saving choices installs
-selected packages; unchecked games leave the active catalogue. Their files are
-retired once neither retained catalogue references them. Game code and artwork
-are absent from base firmware and load only when launched. The fixed 256 KiB
-execution slot remains reserved even with no games installed.
-**Install game file…** adds a compatible custom package; **Remove selected game**
-removes it while retaining scores/progress. New games require no firmware rebuild.
-Firmware ZIPs and packaged Media Manager include prepared built-in packages.
-Source users can run `python linnet games build-library --target video5g-m25 --output out/game-packages/video5g-m25`
-for their target. See [game creation](game-authoring.md).
-When upgrading older firmware, install matching firmware and save Games before
-ejecting. The old `GAMES.BIN` mask is read for migration only; older firmware
-cannot load external packages. Explicit damaged-catalogue recovery archives
-metadata and preserves package and save files.
-In the iPod's **Games** browser, **Play/Pause** starts/resumes or pauses your
-current music. The hint shows the available action. Launching a game keeps that
-playback running; game controls retain their normal meaning once inside a game.
-Choose a song or queue in Music (or audio in Files) first. Music Quiz uses its
-own clues and restores the previous Music queue when it exits; a Files audio
-session is not restored by the quiz. Other games preserve Files playback. Game
-effects yield to music playback.
-**Screens** configures supported menus.
-It shares Home, Music, Settings, and Extras choices with the iPod's
-**Settings → Edit Menus** editor. Saves merge edits to different menus and stop
-for review if both interfaces changed the same menu differently. Choose
-**Reload from iPod** to discard the desktop draft and read current device choices;
-unsaved edits require confirmation before reload. Theme, brightness, and game
-scores are preserved when saving menus.
-Supported shortcuts unchecked here remain available as unchecked items in the
-iPod editor. Device edits change shortcut visibility and order only; media
-preparation and feature availability remain controlled by Media Manager and the
-firmware build. Games and UI Demo selections are editable only in Media Manager.
-See the [device menu hierarchy](navigation.md) for the default organization and
-controls. Save changes, eject, and restart to apply them. Game availability
-follows the target manifest; it is not enabled on every color iPod. If game
-settings cannot be read because they are damaged, use **Replace damaged game
-settings** to choose and save a new selection.
+**Import M3U…** reads UTF-8 `.m3u` or `.m3u8` playlists. Review the matches,
+choose **Import matched songs**, then **Save to iPod**. Unmatched entries are
+skipped. **Export M3U…** saves the selected playlist to your computer.
+
+### Games
+
+On Photo, Video, and Classic, open **Games**, select the games you want, and
+choose **Update games on iPod**. Eject safely and restart Linnet. Built-in game
+packages are included with the app and firmware ZIPs.
+
+Use **Install game file…** for a compatible custom game package. **Remove
+selected game** removes it while retaining scores and progress. See
+[creating games](game-authoring.md) for custom packages.
+
+In the iPod's Games browser, **Play/Pause** controls your current music. Choose
+music before launching a game to keep it playing during gameplay. Music Quiz
+uses its own clues and restores the previous Music queue when it exits.
+
+### Screen menus
+
+Open **Screens**, choose which menu items appear and their order, then **Save
+to iPod**, eject, and restart. The iPod's **Settings → Edit Menus** changes the
+same menus. **Screen options → Reload from iPod…** replaces your desktop draft
+with the current device choices. If both interfaces changed the same menu,
+review the conflict before saving. See [device menus](navigation.md).
 
 ## Make folders available in Apple OS
 
-**Preparation → Available in Apple OS → Choose folders…** selects existing Music,
-Photos, and Videos folders. **Update Apple OS** prepares the Apple databases;
-check readiness again after changing those folders. Compatible plain-text Notes
-are read directly by Apple OS.
+Preparing media for Linnet and updating Apple's library are separate actions.
+On a supported device:
 
-This is a separate update to Apple's library, not Linnet adopting iTunesDB as its
-own index. Existing Apple tracks and playlists are preserved by the managed
-writer. It is enabled only for explicitly qualified **FAT32** device/volume
-combinations. Qualified models and media restrictions are listed in
-[Apple OS library updates](apple-stock-music.md#supported-boundary).
-The monochrome Q21 workflow offers Music only. Eligibility checks the target,
-disk serial, volume serial, sector size, and any required model identity together;
-matching the model alone does not qualify another iPod or a reformatted volume.
-Other devices can still use Linnet media preparation when their target supports
-it, but **Update Apple OS** remains unavailable until that exact device and
-volume are qualified.
-An iPod can contain Apple firmware while its Apple music library is empty.
-Preparing Music, Photos, or Videos for Linnet does not add them to Apple's
-databases; select compatible folders and complete **Update Apple OS** on a
-qualified device.
+1. Prepare Music for Linnet first.
+2. Open **Preparation → Available in Apple OS → Choose folders…** and select
+   existing folders under Music, Photos, or Videos.
+3. Review readiness, then choose **Update library**. Repeat after changing files
+   in those folders.
 
-The current music path accepts MP3s whose real FAT short path below `/Music`
-fits the 23-character Apple limit. Prepare Music for Linnet first so its
-metadata is available. Apple videos must be MP4, M4V, or MOV files below
-`/Videos` with a short FAT alias that fits the 22-character video limit;
-FFprobe checks their codecs and dimensions. Choose existing folders under
-`/Music`, `/Photos`, or `/Videos`; Notes are read directly by Apple OS.
-Unsupported paths or formats need attention, and the normal workflow does not
-rewrite FAT aliases. See [Apple database behavior](apple-stock-music.md).
+Apple library updates require a supported iPod with FAT32 storage. Monochrome
+iPods offer Music only; Photo / Color offers Music and Photos; Video and Classic
+also support Videos. Classic may ask you to reconnect in Apple Disk Mode to read
+its Apple identifier. Compatible plain-text Notes are read directly by Apple OS.
+Existing Apple tracks and playlists are preserved.
+See [supported devices, formats, and folder requirements](apple-stock-music.md#supported-boundary).
 
 ## iPod theme font
 
-Install current Linnet firmware, then connect a color iPod in Disk Mode and open
-**Settings → iPod theme font → Download and use Apple font**. Media Manager
-downloads the 3.8 MB iPod Photo 1.2.1 archive directly from Apple's server,
-checks the pinned archive and firmware SHA-256 values, and extracts Podium Sans
-on your computer. It installs only the optional font file in
-`/.LINNET/PODIUM.FNT`. Safely eject and restart Linnet to apply it.
+1. Connect a color iPod in Disk Mode.
+2. Open **Settings → iPod appearance → Choose font → Download and use Apple
+   font (3.8 MB)**.
+3. Eject safely and restart Linnet.
 
-The font applies to iPod Photo, iPod Classic, Classic Split, Video Paper,
-Video Night, and Video Copper themes on the supported color targets. Other
-themes keep their bundled fonts. The monochrome iPod keeps its own font.
-Choose **Use included font**, safely eject, and restart to remove the optional
-font. Missing or damaged font files fall back to the included licensed font.
+The app downloads verified firmware directly from Apple and extracts Podium
+Sans on the computer. Compatible color themes use it; other themes retain
+their included font. Choose **Use included font**, eject, and restart to switch
+back. The font is kept through firmware updates and reinstalls.
 
-The verified archive and extracted font are cached under
-`%LOCALAPPDATA%/Linnet/Fonts`, allowing later installations without downloading
-again. The download runs only when requested, can be stopped before publication,
-and never runs the Apple updater. Regular Linnet firmware updates and reinstalls
-preserve the optional font file. Preparing Notes accounts for both font choices.
-
-Apple's software license terms apply to extraction and reuse. The Settings page
-links to those terms. Apple font data is excluded from public source and
-packages; keep downloaded firmware, extracted fonts, and local simulator copies
-private. See the [source and provenance notice](../sdk/assets/PODIUM-SANS-NOTICE.txt).
+Apple's software license is linked in Settings. See the
+[font notice](../sdk/assets/PODIUM-SANS-NOTICE.txt) for source and usage details.
 
 ## Computer storage settings
 
-**Settings → Computer storage** shows the reusable cache size and location.
-The default is `%LOCALAPPDATA%/Linnet/Cache/Media`. **Change location…** moves
-reusable data to a dedicated local folder, verifies each copy, and saves the
-choice in `%LOCALAPPDATA%/Linnet/media-cache.json`. **Open cache folder** opens
-the selected location; **Refresh size** measures it again.
+Open **Settings → Computer storage** to see cache usage and location. Under
+**Manage cache**:
 
-**Clear cache…** removes recognized reusable thumbnails, metadata, and prepared
-media. They are recreated when needed. Unknown files, saved selections, recovery
-records, and startup backups are kept. Moving or clearing the cache is blocked
-while another Media Manager operation uses computer storage.
+- **Change location…** moves reusable media data to an empty local folder.
+- **Clear cache…** deletes reusable files; preparation recreates them when needed.
+- **Open cache folder** and **Refresh size** help inspect usage.
 
-Saved state and receipts stay under `%LOCALAPPDATA%/Linnet/Media`; startup
-backups stay under `%LOCALAPPDATA%/Linnet/Installer`. Settings provides buttons
-to open both locations. Changing the cache folder does not move those records.
-Removing the desktop app retains the chosen cache, recovery data, FFmpeg paths,
-and other saved preferences.
+Clearing or moving the cache keeps iPod files, saved selections, and recovery
+backups. These actions are unavailable while another operation uses the cache.
 
-## Removal, recovery, and caching
+The default cache is `%LOCALAPPDATA%/Linnet/Cache/Media`. Saved state and
+receipts stay under `%LOCALAPPDATA%/Linnet/Media`; startup backups stay under
+`%LOCALAPPDATA%/Linnet/Installer`. Use **Backups and recovery → Open folder** to
+open those locations. Keep recovery backups even if you clear the cache or
+remove the desktop app.
 
-Use the library's removal controls and **Trash** to restore removed content or
-permanently delete it. Moving files to `.LINNET/TRASH` is recoverable and does
-not free space. Removing a prepared library does not necessarily remove originals;
-preparing those originals again can recreate it.
+## Update firmware and startup settings
 
-Trash provides undo for media removals, including the library information needed
-to restore playback. Each removal appears as one recoverable entry. The sidebar
-badge counts those entries on the selected iPod, hides when Trash is empty, and
-updates after removals, restores and permanent deletion. Internal recovery files
-do not increase the count. Firmware recovery backups have their own lifecycle.
+Connect in Disk Mode and open **iPod setup → Change firmware…**. Choose a new
+matching ZIP, then **Update firmware**. This also switches between User and
+Developer builds. Eject safely when the app says the update is ready. Media and
+settings are kept.
 
-After source changes, prepare the affected library again. When a same-name
-source would replace an existing file, an empty source folder would retire a
-published library, or a video catalog contains a missing entry, the
-**Review preparation changes** dialog lists each proposed action. Check that
-list before **Approve changes and prepare**. Approved existing files and
-retired libraries move to recoverable Trash; the video catalog is backed up
-before missing entries are removed from its index. Canceling the review leaves
-those changes unapplied.
+When **Startup** offers **Start automatically**, choose the default system and
+**Save**. Its startup selector also lets you hold **MENU** while the iPod starts
+for a one-time choice. If the app shows **Read startup settings** while Linnet
+Link is connected, choose it to open Disk Mode and read these controls.
 
-If Videos shows **Needs repair** because its catalog is damaged, open
-**Preparation → Review catalog backups**. The picker shows validated on-device
-backups and their titles; restoring one saves the damaged catalog bytes for
-recovery. Videos added after that backup may need preparation again. If no
-complete backup is available, the app keeps the damaged catalog and prepared
-videos in place for manual recovery.
+**Update startup selector**, when offered, updates the bootloader. Select a
+matching ZIP first. An interrupted update offers **Resume startup selector
+update**; finish it before changing other startup settings.
 
-Reusable data uses the [configured cache folder](#computer-storage-settings).
-Fast music verification checks file identity, size, and timestamps; full verification also
-reads media hashes. Cached readiness is not proof of unchanged file contents.
+## Reinstall or remove Linnet
 
-Use the skipped-file controls to retry repaired sources. Preserve installation
-backups and device receipts independently of disposable caches; see
-[local artifacts](local-artifacts.md).
+To reinstall, use **Change firmware…**, choose a matching ZIP, and **Update
+firmware**. Settings and prepared media are retained.
 
-### Reconnect and collect diagnostics
+To remove Linnet:
 
-If an iPod disconnects during an operation, reconnect it in Disk Mode and use
-**Refresh** to rediscover and inspect its current state. **Choose iPod** in the
-sidebar is available whenever you need to select a device; when multiple iPods
-are found, choose the intended one in the picker. A failed scan clears the old
-connection so the next Refresh can rediscover the volume. Review the library
-and preparation status before another write; do not assume that an interrupted
-step finished.
+1. Restore anything you want to keep from **Trash**.
+2. Open **iPod setup → Remove Linnet → Remove…**.
+3. Review the previous startup software and confirm removal. If Trash contains
+   files, review them first; **Empty Trash and remove Linnet** permanently
+   deletes them.
+4. Keep USB connected through any restarts and follow the app's connection
+   prompts until cleanup finishes.
 
-If the app shows **Media index recovery needed**, choose **Recover media indexes**
-and review the affected Music or Photos groups. Keep the iPod connected while
-the app checks its saved recovery record and restores a verified index set.
-The app holds normal library actions and eject until recovery finishes, then
-rescans the collection. Leave the recovery files on the iPod for the app to
-inspect; an invalid record needs manual attention.
+Removal restores the saved previous startup software and deletes Linnet's
+system files, settings, and prepared libraries. The Music, Photos, Videos, and
+Notes folders remain. Media prepared only for Linnet may need an Apple library
+sync to appear in Apple OS. A verified recovery backup is required.
 
-After preparation, open **Preparation details** to see completed, skipped, and
-failed steps and open the saved receipt. Receipts are stored under
-`%LOCALAPPDATA%/Linnet/Media`; reusable data uses the configured cache folder.
-Installation backups are separate under
-`%LOCALAPPDATA%/Linnet/Installer`. **Diagnostics** in the footer shows the last
-50 recorded operation errors on this computer. **Export support file** saves
-that history as JSON with device serials, recognized paths, and email addresses
-filtered out. Review the file before sharing it, since an error may still
-contain a personal media name. When reporting a problem, include the target
-model, the step you attempted, and any relevant preparation receipt after
-checking it for personal details. **Settings → Help and About** shows the
-Linnet system version reported by the app and quick setup guidance.
+**Classic:** removal requires a Developer build with Linnet Link. If using a
+User build, install the matching Developer ZIP and eject safely to start it,
+then reconnect in Linnet Disk Mode. Keep the original bootloader backup. During
+removal, the iPod restarts into Apple software; its USB disk must appear in
+Windows for cleanup to finish. Follow the reconnect dialog if it does not.
+If cleanup is interrupted, reconnect the same iPod and choose **Remove…** again.
+
+## Remove media and use Trash
+
+Use a library's removal controls to remove content. Open **Trash**, select an
+item, and choose **Restore** to recover it, or delete it permanently to free
+space. Items in Trash still occupy iPod storage. Removing an item from the
+preparation queue only removes the queued action; its source file is kept.
+
+A removed prepared library can be recreated by preparing its originals again.
+Review the app's removal confirmation to see which files will change.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| iPod not found | Enter Apple Disk Mode using the instructions in **iPod setup**, try a direct USB port, then **Find or switch iPod** again. |
+| USB detected but storage unavailable | Assign the existing FAT32 volume a drive letter in Windows Disk Management, then search again. |
+| Reading the collection takes a long time | Large libraries take longer, especially on the first read. Check progress or choose **Stop**. If iTunes is syncing, let it finish before refreshing. |
+| Firmware ZIP moved, missing, or rejected | Choose **Choose ZIP…** again and select a ZIP for the detected model. Leave it unextracted. |
+| Preparation was interrupted | Reconnect the same iPod in Disk Mode, refresh, and review its status before preparing again. Completed work is reused. |
+| **Media index recovery needed** | Choose **Recover media indexes** and keep the iPod connected until recovery and the rescan finish. Leave its recovery files in place. |
+| Videos show **Needs repair** | Open **Preparation → Video options → Review catalog backups…**. Select a valid backup and choose **Restore selected backup**. Videos added after that backup may need preparation again. If none is valid, keep the files for recovery. |
+
+### Send a hardware report
+
+Open **iPod setup → Save hardware report…**, review it, then choose **Save
+report…** or **Copy report**. **Contact Linnet support** opens a GitHub issue;
+include the problem and any storage changes, then attach or paste the report.
+Nothing uploads automatically. Reports exclude serial numbers, usernames, local
+paths, and media. GitHub issues and attachments are public.
+
+For operation errors, open **Diagnostics** in the footer and **Export support
+file**. Review it before sharing: an error may contain a personal media name.
+Preparation results are available under **Preparation → More → View preparation
+details**.
+
+### Take an iPod screenshot
+
+With a Developer or Trace build running through Linnet Link, choose
+**Screenshot…** in the device card at the bottom of the sidebar. Use **Copy
+image** or **Save PNG…** in the preview. Screenshots require the running Linnet
+OS; they are unavailable in Disk Mode and User builds.
+
+<details>
+<summary>Running Media Manager from source</summary>
+
+Follow the [Windows source setup](../README.md#develop-on-windows). Supply
+`ffmpeg.exe` and `ffprobe.exe` on PATH, or choose their folder under **Settings →
+Advanced preparation → FFmpeg (source builds)**.
+
+To compile firmware during installation, open **iPod setup → Build from source
+(advanced)** and enable **Compile firmware on this computer**, then choose User
+or Developer firmware. This requires the configured source checkout and
+compiler. See [source installation](../README.md#open-media-manager-from-source)
+and [boot and recovery tooling](bootstrap-tooling.md) for developer commands.
+
+</details>

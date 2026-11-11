@@ -373,12 +373,12 @@ def compile_system(root, output, configpath=None, target_override=None):
             node['canvas']=callbacks.get(node['canvas'],'')
             if scene['id']=='linnet.system.home' and 'linnet.system.games' in selected:
                 for i, target_id in enumerate(node['targets']):
-                    if target_id=='local.example.notes':
+                    if target_id=='linnet.system.ui-demo':
                         node['targets'][i]='linnet.system.games'
                         node['items'][i]='Games'
             # Optional utilities may be omitted to stay within the scene budget.
             if node['targets']:
-                optional={'linnet.system.games':'games', 'linnet.system.files':'files', 'local.example.notes':'demo'}
+                optional={'linnet.system.games':'games', 'linnet.system.files':'files', 'linnet.system.ui-demo':'demo'}
                 pairs=[(label, target_id) for label, target_id in zip(node['items'], node['targets'])
                        if target_id in selected or target_id not in optional or
                        (feature_enabled(features, optional[target_id]) and target_id != 'linnet.system.games')]

@@ -11,6 +11,25 @@ fourth-generation monochrome iPods. The project includes a bootloader, kernel,
 on-device interface, Windows Media Manager, USB development tools, and a UI
 simulator.
 
+- **Share music with Apple software.** Prepare compatible iTunes-synced music
+  for Linnet, and add supported MP3s from `/Music` to the Apple library.
+  See [sharing requirements](docs/apple-stock-music.md#supported-boundary).
+- **Preparation on your computer.** Media Manager builds library indexes,
+  artwork, photos, and video conversions for the iPod's display and playback
+  formats, so the device can use prepared data.
+- **Video on iPod Photo.** Convert videos on your computer and play them with
+  sound on the Photo / Color's display.
+- **Desktop media and menu controls.** Manage playlists, select games, and
+  configure the iPod's Home, Music, Settings, and Extras menus in Media Manager.
+- **Click-wheel menus and themes.** Browse media through click-wheel menus with
+  configurable shortcuts and selectable themes.
+- **Linnet Link.** Developer firmware provides two-way USB communication for
+  live diagnostics, remote input, screenshots, and loading test firmware into RAM.
+- **Native UI authoring.** Create screens in TSX, compile them into native
+  firmware, and preview them with the desktop simulator.
+- **Startup selection.** Choose Linnet, preserved Apple software, or a compatible
+  installed Rockbox image from the startup menu.
+
 [Hardware](#confirmed-hardware) · [Installation](#get-started) ·
 [Media Manager](#linnet-media) · [Linnet Link](#linnet-link) ·
 [Games](#games) · [Themes](#themes) · [Simulator](#simulator) ·

@@ -27,9 +27,9 @@ void ln_platform_click(uint8_t tone,uint8_t volume){
     if(tone>3u||tone==1u||!volume||volume>4u)return;
     uint32_t flags=ln_core_irq_save();
     if(active){ln_core_irq_restore(flags);return;}
-    /* Classic's piezo is on GPIO0.6/0.7. GPIO command facts are also used
-     * by Rockbox's piezo-6g.c bootloader; Linnet uses independent Timer G
-     * edges so Timer A's watchdog, Timer F's deadlines and PCM stay owned. */
+    /* Classic's piezo is on GPIO0.6/0.7; GPIO command reference:
+     * Rockbox's piezo-6g.c bootloader. Timer G schedules the edges, preserving
+     * Timer A's watchdog, Timer F's deadlines and PCM operation. */
     LN_CLOCK_GATE1&=~((1u<<5)|(1u<<12));
     LN_REG(0x3cf00200u)=0x0070eu;
     LN_REG(0x3cf00200u)=0x0060fu;

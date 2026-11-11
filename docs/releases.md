@@ -48,9 +48,8 @@ Select the whole firmware ZIP for the detected target inside Media Manager
 **without extracting it**. Media Manager selects the required files for your
 installation. Each ZIP has a `README.txt`, a checksum manifest, and a `firmware/`
 folder containing `linnet-os`, `linnet-boot-standard`, and `linnet-boot-multiboot`
-images and reports. Both bootloaders are Linnet software; the multiboot variant
-can also start a compatible Rockbox installation already on the device. The
-package does not install Rockbox. Packaging runs image verification and the installer's bundle
+images and reports. The multiboot variant can also start a compatible Rockbox
+installation already on the device. Packaging runs image verification and the installer's bundle
 validation. User OS/Boot images exclude developer tools. Developer ZIPs include diagnostics and Linnet Link; Media Manager binds their firmware to the connected iPod without compiling on the computer. The Classic
 ZIP additionally includes a precompiled bootstrap template; Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
 remaining Link, NOR and native Disk Mode installation steps. See

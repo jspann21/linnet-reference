@@ -1,4 +1,4 @@
-/* Linnet adapter, not Rockbox's codec API. No allocator, scheduler or libc. */
+/* Freestanding libmad adapter with memory and integer arithmetic helpers. */
 #ifndef LINNET_LIBMAD_CODECLIB_H
 #define LINNET_LIBMAD_CODECLIB_H
 #include "config.h"

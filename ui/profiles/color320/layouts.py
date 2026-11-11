@@ -181,7 +181,7 @@ def apply_layout(scenes, theme):
         elif sid == 'video-output':
             place(listing, x, y + 12, w, row * 2)
             place(texts[0], x, bottom - 30, w, 24)
-        elif scene['id'] == 'local.example.notes':
+        elif scene['id'] == 'linnet.system.ui-demo':
             place(texts[0], x, y, w, 22)
             half = (w - 12) // 2
             for node in nodes:

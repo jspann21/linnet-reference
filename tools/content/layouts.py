@@ -215,7 +215,7 @@ def refine_scene(scene,theme,body):
     texts=[n for n in nodes if n['kind']==3]
     listing=next((n for n in nodes if n['kind'] in (6,7,8)),None)
     if listing and listing['kind']==6:rh=max(18,fh+5)
-    if scene['id']=='local.example.notes':
+    if scene['id']=='linnet.system.ui-demo':
         top_h=2*fh if style=='aurora' else fh
         for n in texts:place(n,x+4,y,w-8,top_h);n['flags']=WRAP
         toast_h=fh+6;dialog_h=fh+10;toast_y=bottom-toast_h;dialog_y=toast_y-4-dialog_h
@@ -426,7 +426,7 @@ def gate_features(scenes,features):
     groups={
         'cover_flow':{'linnet.system.cover-flow'},
         'files':{'linnet.system.files'},
-        'demo':{'local.example.notes'},
+        'demo':{'linnet.system.ui-demo'},
         'photos':{'linnet.system.photos','linnet.system.photos-grid','linnet.system.photos-viewer','linnet.system.photos-options'},
         'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls'},
         'video_settings':{'linnet.system.video-settings','linnet.system.video-output'},

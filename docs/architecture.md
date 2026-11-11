@@ -14,10 +14,15 @@ work, and a native renderer; there is no JavaScript runtime.
 | `hal/<family>/`, `hal/codecs/` | SoC implementations and audio codec drivers |
 | `targets/` | Hardware manifests, board wiring, display adapters, and policies |
 | `services/` | Storage, playback, settings, games, and other native services |
-| `ui/`, `apps/`, `themes/` | Native renderer and authored presentation |
+| `ui/`, `themes/` | Native renderer, built-in screens, and theme definitions |
 | `tools/` | CLI, build system, media preparation, Link, and simulator |
 | `sdk/`, `scenarios/` | Authoring templates and existing verification scenarios |
 | `third_party/` | Imported codecs, notices, and provenance |
+
+Built-in screens, including the optional UI Demo, live under `ui/system/`.
+Custom firmware screens can be authored under `apps/<name>/`, which the content
+compiler also discovers. These screens are compiled into the OS; see the
+[UI SDK](../sdk/README.md) for templates and menu integration.
 
 Targets select their HAL, memory layout, capabilities, and presentation through
 manifests. Photo, Video, and monochrome 4G use PP502x; Classic uses S5L8702.

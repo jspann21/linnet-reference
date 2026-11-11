@@ -1,4 +1,4 @@
-/* Independent WM8758 playback configuration for M25. No Rockbox runtime. */
+/* WM8758 playback configuration for iPod Video. */
 #include "hal/codecs/codec.h"
 #include "hal/api/core.h"
 static uint16_t headphone_level;
