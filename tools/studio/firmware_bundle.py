@@ -59,6 +59,7 @@ def create(target, output, jobs=2, build='user'):
     check_packaged_assets(ROOT)
     payloads = {"README.txt": (('User build: everyday use.\n' if build == 'user' else
         'Developer build: diagnostics and Linnet Link. Media Manager binds this ZIP to your iPod.\n') +
+        ('For iPod Classic 6G and 7G, including the 6.5G revision.\n' if target == 'classic6g-n25' else '') +
         '\n' + PACKAGE_README).encode("utf-8")}
     if target_spec(target)['capabilities'].get('games',False):
         from tools.studio.game_build import build_library,library_files

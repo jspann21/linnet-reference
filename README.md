@@ -312,8 +312,8 @@ the host headers and libraries supplied with LLVM-MinGW.
 <summary><strong>Package firmware and the Windows app</strong></summary>
 
 ```powershell
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-p98-user.zip
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-p98-dev.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-user.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-dev.zip
 .\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
 .\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```

@@ -41,6 +41,7 @@ installation; Classic requires guided DFU entry for its initial Boot setup.
 All Classic revisions use the shared `classic6g-n25` S5L8702 firmware family.
 `classic6g`, `classic65g`, and `classic7g` are build aliases for that target;
 the target ID does not identify the retail generation.
+Download the ZIP labeled `classic6g-7g` for any of these revisions.
 
 | Apple order numbers | Retail revision | Original capacity |
 | --- | --- | --- |

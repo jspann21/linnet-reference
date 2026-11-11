@@ -52,10 +52,16 @@ jobs:
         run: python -m compileall -q tools
       - name: Build and verify all firmware bundles
         run: |
-          $targets = @('photo4g-p98', 'video5g-m25', 'ipod4g-q21', 'classic6g-n25')
-          foreach ($target in $targets) {
+          $targets = [ordered]@{
+            'photo4g-p98' = 'photo4g'
+            'video5g-m25' = 'video5g'
+            'ipod4g-q21' = 'ipod4g'
+            'classic6g-n25' = 'classic6g-7g'
+          }
+          foreach ($target in $targets.Keys) {
+            $downloadTarget = $targets[$target]
             foreach ($build in @('user', 'dev')) {
-              python linnet release bundle --target $target --build $build --jobs 4 --output "out/releases/linnet-$target-$build.zip"
+              python linnet release bundle --target $target --build $build --jobs 4 --output "out/releases/linnet-$downloadTarget-$build.zip"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             }
           }

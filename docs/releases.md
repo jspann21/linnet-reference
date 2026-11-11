@@ -11,10 +11,10 @@ after 14 days. Public release assets remain on the repository's Releases page.
 | --- | --- |
 | `LinnetSetup.exe` | Recommended Windows x64 installer: installs Media Manager, adds a Start menu shortcut, and provides an uninstall entry |
 | `linnet-media-windows.zip` | Optional portable Media Manager, including `Linnet Media.exe`, Python, Qt, media preparation helpers, and Apple database helpers |
-| `linnet-photo4g-p98-user.zip` / `linnet-photo4g-p98-dev.zip` | iPod Photo firmware |
-| `linnet-video5g-m25-user.zip` / `linnet-video5g-m25-dev.zip` | iPod Video firmware |
-| `linnet-ipod4g-q21-user.zip` / `linnet-ipod4g-q21-dev.zip` | Monochrome fourth-generation iPod firmware |
-| `linnet-classic6g-n25-user.zip` / `linnet-classic6g-n25-dev.zip` | iPod Classic firmware and initial Boot setup; follow Media Manager's connection and button prompts |
+| `linnet-photo4g-user.zip` / `linnet-photo4g-dev.zip` | iPod Photo firmware |
+| `linnet-video5g-user.zip` / `linnet-video5g-dev.zip` | iPod Video firmware |
+| `linnet-ipod4g-user.zip` / `linnet-ipod4g-dev.zip` | Monochrome fourth-generation iPod firmware |
+| `linnet-classic6g-7g-user.zip` / `linnet-classic6g-7g-dev.zip` | iPod Classic 6G and 7G firmware (including 6.5G) and initial Boot setup; follow Media Manager's connection and button prompts |
 | `linnet-source.zip` | Repository source at the exact commit used for these builds, including build scripts and vendor notices |
 | `SHA256SUMS.txt` | SHA-256 checksums of the downloads and these instructions |
 
@@ -41,6 +41,8 @@ script are included in `_internal/conversion-tools`. The executables remain
 separate and replaceable. See [FFmpeg's licensing information](https://ffmpeg.org/legal.html).
 
 Choose `-user.zip` for everyday use or `-dev.zip` for diagnostics and Linnet Link. Media Manager reads the build type and iPod model from the ZIP and displays them automatically.
+
+Classic 6G, 6.5G and 7G use the same `classic6g-7g` download.
 
 Select the whole firmware ZIP for the detected target inside Media Manager
 **without extracting it**. Media Manager selects the required files for your
@@ -87,12 +89,15 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r tools/studio/requirements-build.txt
 .\.venv\Scripts\python.exe linnet setup
 .\.venv\Scripts\python.exe linnet doctor
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-p98-user.zip
-.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-p98-dev.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build user --output out/releases/linnet-photo4g-user.zip
+.\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --build dev --output out/releases/linnet-photo4g-dev.zip
+.\.venv\Scripts\python.exe linnet release bundle --target classic6g-n25 --build user --output out/releases/linnet-classic6g-7g-user.zip
+.\.venv\Scripts\python.exe linnet release bundle --target classic6g-n25 --build dev --output out/releases/linnet-classic6g-7g-dev.zip
 .\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```
 
-Repeat both bundle commands for the other target IDs in the table. Installer
+Repeat both bundle types for the remaining targets. Classic uses the internal
+target ID `classic6g-n25` and the shared `classic6g-7g` download name. Installer
 packaging downloads and verifies the pinned Inno Setup compiler, then prepares
 it in portable mode under `out/toolchains/`. Its version and checksum are in
 [`config/inno-setup.json`](../config/inno-setup.json). The installed app version
