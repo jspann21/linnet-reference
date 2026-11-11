@@ -34,11 +34,10 @@ volume edge pairs (up `0x04`/`0x08`, down `0x01`/`0x02`). Accessory identificati
 uses bits 4/5, not volume buttons. Unplugging resets the controller. Center
 release timing can lag after inactivity. Linnet has no center hold commands.
 
-Linnet measurements on both 2008 and 2009 controllers found mode readback `0x2f`,
-center idle `0x80` and center pressed `0x85`. Bit 2 sometimes appears alone after
-release (`0x84`), so Linnet counts bit 0 and requires a released interval before
-another press. The high idle markers are not buttons. The HAL address is `0x39`,
-confirmed by successful reads and button transitions on both devices.
+The driver checks the mode bits with `(mode & 0x77) == 0x27` and reads bit 0
+of register 4 as the center pressed level. Bit 2 can appear alone after release
+(`0x84`), so Linnet ignores it and requires a released interval before another
+press. The high idle markers are not buttons.
 
 The driver samples every 20 ms in the foreground, with interrupts enabled.
 Insertion has two settling intervals, and failed transfers clear all pending

@@ -128,8 +128,6 @@ void ln_storage_schedule_performance(uint32_t words[24]);
  * Spans overlap; total minus nested is top-level inclusive, not CPU time. */
 void ln_storage_media_performance(uint32_t words[16]);
 int ln_storage_publication_fault(uint32_t stage);
-int ln_storage_maintenance_begin(void);
-void ln_storage_maintenance_end(bool success);
 #endif
 void ln_storage_progress(void *context);
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)

@@ -41,5 +41,5 @@ The normal update workflow reports unsupported paths without renaming originals
 or rewriting FAT directories. Keep filenames and aliases unchanged after
 preparing the libraries, or prepare and update them again.
 
-See [managed music](../tools/maintenance/a1238_apple/managed_music.c) and
-[managed photos](../tools/maintenance/a1238_apple/managed_photos.c) for the writers.
+See [managed music](../tools/apple/managed_music.c) and
+[managed photos](../tools/apple/managed_photos.c) for the writers.

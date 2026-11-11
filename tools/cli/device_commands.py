@@ -71,12 +71,6 @@ def register_device(commands):
         if action=='player-seek':entry.add_argument('--sample',type=int,required=True)
     history=device.add_parser("prepare-update-history",help="Add optional rollback history records to an identified Disk Mode installation")
     _record_arguments(history)
-    native=device.add_parser("native-install")
-    native.add_argument("--package",type=Path,required=True)
-    native.add_argument("--package-sha256",required=True)
-    native.add_argument("--port",required=True)
-    native_status=device.add_parser("native-status")
-    _link_arguments(native_status)
     storage_cycle=device.add_parser("storage-cycle")
     storage_cycle.add_argument("--image",type=Path,required=True)
     storage_cycle.add_argument("--scenario",type=Path,required=True)
@@ -243,12 +237,6 @@ def run_device(args, emit):
     elif args.action == "prepare-update-history":
         from tools.studio.update_history import provision
         emit(provision(args.mount,args.disk_serial,args.disk_bytes,args.confirmed_build))
-    elif args.action == "native-install":
-        from tools.link.native_install import install
-        result=install(ROOT/'out/runs',args.package,args.package_sha256,args.port,
-                       lambda item:print(json.dumps(item),file=sys.stderr))
-        emit(result)
-        return 0 if result['passed'] else 2
     elif args.action == "update-cycle":
         from tools.link.storage_campaign import update_cycle
         result=update_cycle(ROOT/'out/runs',args.image,args.crash_image,args.port,
@@ -385,8 +373,6 @@ def run_device(args, emit):
                 elif args.action=="ui-state":
                     from tools.link.platform import ui_state
                     emit(dict(identity=identity,ui=ui_state(session,identity['generation'])))
-                elif args.action=="native-status":
-                    emit(dict(identity=identity,native=session.native_status()))
                 elif args.action=="storage-info":
                     from tools.link.storage_campaign import FIELDS
                     emit(dict(identity=identity,storage=dict(zip(FIELDS,session.storage_state())),update=list(session.update_status())))

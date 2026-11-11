@@ -80,8 +80,8 @@ static uint16_t storage_rx_bytes,storage_rx_ready;
 enum { LINNET_USB_IDLE, LINNET_USB_DATA_IN, LINNET_USB_LINE_OUT,
        LINNET_USB_STATUS_IN, LINNET_USB_STATUS_OUT };
 
-/* Development-only experimental identity, inherited from the lab endpoint.
- * This VID/PID is not a claim of an assigned production USB identity. */
+/* Experimental USB identity for Linnet Link. Native Disk Mode substitutes
+ * its target PID. These identifiers do not imply an assigned production USB identity. */
 static const uint8_t ln_usb_device[] = {
     18,1,0x10,1,2,0,0,64, 0x09,0x12,0x4a,0x50,0,1,1,2,3,1
 };

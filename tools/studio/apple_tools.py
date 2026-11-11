@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = ROOT / "config/apple-tools.json"
-SOURCES = ROOT / "tools/maintenance/a1238_apple"
+SOURCES = ROOT / "tools/apple"
 KINDS = ("music", "photos")
 
 

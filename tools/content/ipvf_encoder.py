@@ -1,4 +1,3 @@
-# Adapted from the owned ipod/tools/ipvf/encode.py canonical creator.
 #!/usr/bin/env python3
 """Encode video and audio for Linnet's target-native IPVF viewer.
 

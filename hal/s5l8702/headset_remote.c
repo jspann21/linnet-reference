@@ -73,7 +73,7 @@ void ln_s5l_remote_poll(uint32_t now,bool headphones,uint8_t *actions,int8_t *vo
         failed(now);return;
     }
     ++samples;raw=mode|((uint32_t)r4<<8)|((uint32_t)r5<<16)|((uint32_t)r6<<24);
-    /* Bit 0 is the pressed level on both measured revisions. Bit 2 can
+    /* Bit 0 is the center pressed level. Bit 2 can
      * reappear alone (0x84) after release: counting it creates phantom clicks
      * and can hide the released interval before the next real press. */
     bool pressed=(r4&1u)!=0;

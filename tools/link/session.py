@@ -792,34 +792,6 @@ class Session:
     def storage_recover(self, generation: int):
         self._storage_ack(Command.STORAGE_RECOVER,generation)
 
-    def native_status(self) -> dict:
-        reply=self.request(Command.NATIVE_STATUS,timeout=15)
-        if reply == struct.pack('<16I', 0x32424e4c, 11, 12, *([0] * 13)):
-            return dict(supported=False, phase=11, error=12)
-        if len(reply)!=64 or reply[:4]!=b'LNB2':
-            raise ProtocolError('invalid native updater status')
-        words=struct.unpack('<8I',reply[:32])
-        return dict(zip(('magic','phase','error','offset','writes','bytes_read','elapsed_us','request_generation'),words),
-                    observed_sha256=reply[32:].hex())
-
-    def native_install(self, generation: int, package: bytes, progress=None) -> dict:
-        if not 68096<=len(package)<=133632 or (len(package)-2560)%512 or package[:4]!=b'LNPK' or zlib.crc32(package[:508])!=struct.unpack_from('<I',package,508)[0]:
-            raise ValueError('invalid bounded native package')
-        digest=hashlib.sha256(package).digest()
-        self._storage_ack(Command.NATIVE_BEGIN,generation,struct.pack('<I',len(package))+digest)
-        for offset in range(0,len(package),1008):
-            chunk=package[offset:offset+1008]
-            self._storage_ack(Command.NATIVE_CHUNK,generation,struct.pack('<I',offset)+chunk,offset+len(chunk))
-            if progress:progress(dict(phase='upload',bytes=offset+len(chunk),total=len(package)))
-        if progress:progress(dict(phase='apply',device_write_attempted=True))
-        self._storage_ack(Command.NATIVE_APPLY,generation,timeout=650)
-        status=self.native_status()
-        if (status['phase']!=10 or status['error'] or status['writes']!=3 or
-            status['offset']!=len(package) or status['observed_sha256']!=package[176:208].hex()):
-            self.poisoned=True
-            raise AmbiguousCommand('native update completion identity mismatch; inspect before any further mutation')
-        return dict(passed=True,package_sha256=digest.hex(),status=status,reboot_required=True)
-
     def file_resize(self, generation: int, action: int, size: int):
         if action not in (1,2) or not 1<=size<=0x100000:
             raise ValueError('WORK resize requires create1/grow2 and size1..1MiB')

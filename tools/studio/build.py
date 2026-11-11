@@ -153,16 +153,11 @@ def memory_budget(sections, spec, resident_limit):
                       linked_section_bytes=sum(item['bytes'] for item in retained)))
 
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
-          boot_selector="none", jobs=2, link_optimization="none", portable_serial=False, native_maintenance=False):
+          boot_selector="none", jobs=2, link_optimization="none", portable_serial=False):
     target = target_id(target)
     spec = resolved_target_spec(target)
     if not spec["build_enabled"]:
         raise ValueError(f"{target}: {spec['bringup_blocker']}")
-    if native_maintenance:
-        if target != 'photo4g-p98' or kind != 'os' or profile not in ('dev', 'trace') or portable_serial:
-            raise ValueError('Native maintenance requires a source Photo Developer OS build')
-        if system_config is None:
-            system_config = 'config/photo-native-maintenance.toml'
     if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
         system_config = f"targets/{target}/system.toml"
     if profile not in ("release", "dev", "trace"):
@@ -200,8 +195,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                           probe=probe, device_serial=device_serial)
     if portable_serial:
         configuration['portable_serial'] = True
-    if native_maintenance:
-        configuration['native_maintenance'] = True
     if service_sources:
         configuration['link_optimization'] = dict(mode=link_optimization,
             sources=list(service_sources), compiler_flags=service_flags, linker_flags=lto_link_flags)
@@ -399,9 +392,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT / "boot/src/sha256.c"], "release integrity", ['-O2'])
     else:
         add_sources([ROOT / "kernel/storage_link.c"], "development storage")
-        if kind == "os":
-            add_sources([ROOT / (target_sources['native_update'] if native_maintenance else 'services/update/native.c')],
-                        'source native maintenance' if native_maintenance else 'standard development maintenance status')
     if kind == "os":
         add_sources([ROOT/"ui/runtime/ui.c"], "OS UI runtime")
         add_sources([generated/"linnet_ui.c"], "generated OS UI",

@@ -42,7 +42,7 @@ jobs:
             out/apple-tools
             out/downloads/conversion-tools
             out/conversion-tools
-          key: windows-x64-tools-${{ hashFiles('config/toolchain.toml', 'config/apple-tools.json', 'config/inno-setup.json', 'config/conversion-tools.json', 'tools/studio/apple_tools.py', 'tools/studio/conversion_tools.py', 'tools/studio/toolchain_setup.py', 'tools/studio/inno_setup.py', 'tools/maintenance/a1238_apple/managed_*') }}
+          key: windows-x64-tools-${{ hashFiles('config/toolchain.toml', 'config/apple-tools.json', 'config/inno-setup.json', 'config/conversion-tools.json', 'tools/studio/apple_tools.py', 'tools/studio/conversion_tools.py', 'tools/studio/toolchain_setup.py', 'tools/studio/inno_setup.py', 'tools/apple/managed_*') }}
       - name: Set up and check the pinned toolchain
         run: |
           python linnet setup

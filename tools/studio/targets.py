@@ -91,8 +91,6 @@ def conventional_sources(target_root: Path, spec: dict) -> dict[str, Path]:
         'device': target_root / 'device.c' if (target_root / 'device.c').is_file() else target_root / 'board.c',
         'power': target_root / 'power.c' if (target_root / 'power.c').is_file() else hal / 'power.c',
         'codec': ROOT / 'hal' / 'codecs' / (codec + '.c'),
-        'native_update': target_root / 'native_update.c' if (target_root / 'native_update.c').is_file()
-                         else ROOT / 'services' / 'update' / 'native.c',
     }
     backend = spec['media_video_backend']
     if backend == 'ipvf':
@@ -115,7 +113,7 @@ def _target_sources(path, spec):
         raise RuntimeError(f"invalid audio codec: {path}")
     candidates = conventional_sources(target_root, resolved)
     sources = {name: candidates[name] for name in (
-        "native_update", "hardware", "startup", "linker", "platform", "lcd",
+        "hardware", "startup", "linker", "platform", "lcd",
         "display", "device", "power", "codec",
     )}
     if spec["media_video_backend"] not in ("ipvf", "native-mp4", "bcm-mp4", "none"):

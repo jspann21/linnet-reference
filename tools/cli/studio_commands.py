@@ -44,8 +44,6 @@ def register_primary(commands):
     compile_.add_argument("--link-optimization", choices=("none", "services-size", "services-thin-lto"), default="none",
                           help="optional M25 OS service link optimization (default: none)")
     compile_.add_argument("--system", type=Path, help="system.toml configuration")
-    compile_.add_argument('--native-maintenance', action='store_true',
-                          help='Build the source-only Photo fixed-layout Boot maintenance OS')
     ui=commands.add_parser("ui").add_subparsers(dest="action",required=True)
     ui_compile=ui.add_parser("compile")
     ui_compile.add_argument("--output",type=Path,default=Path('out/ui'))
@@ -133,7 +131,7 @@ def run_studio(args, emit):
         emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
                    args.device_serial, system_config=args.system,
                    boot_selector=args.boot_selector, jobs=args.jobs,
-                   link_optimization=args.link_optimization, native_maintenance=args.native_maintenance))
+                   link_optimization=args.link_optimization))
     elif args.command == "ui":
         from tools.content.compiler import compile_system
         emit(compile_system(ROOT,args.output,args.system))

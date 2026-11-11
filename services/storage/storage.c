@@ -366,7 +366,7 @@ void ln_storage_step(void){storage_step(false);}
 /* The executive runs the full runtime after this bounded step. Other callers,
  * including synchronous drains, retain ordinary recursive runtime service. */
 void ln_storage_step_deferred(void){storage_step(true);}
-bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
+bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 static bool resident_ready(struct ln_resident_media *r){
@@ -706,25 +706,6 @@ static int storage_quiesce(bool image_handoff){
 int ln_storage_quiesce(void){return storage_quiesce(false);}
 int ln_storage_handoff_quiesce(void){return storage_quiesce(true);}
 int ln_storage_resume(void){return ln_block_resume();}
-#if !defined(LINNET_PROFILE_RELEASE)
-int ln_storage_maintenance_begin(void){
-    if(ln_storage_busy()||pending||phase!=6)return 0;
-    struct ln_block_info b;ln_block_snapshot(&b);
-    if(!b.ready||b.quarantined||!ln_storage_quiesce()||!ln_block_resume()||!ln_block_set_window(0,b.sectors))return 0;
-    ln_fat32_abandon(&volume);stores_ready=false;phase=10;return 1;
-}
-void ln_storage_maintenance_end(bool success){
-    phase=9;error=success?0:600;
-    /* Revoke the full-disk maintenance window on every exit. Quiesce freezes
-     * admission immediately, including when a prior write poisoned its flush
-     * barrier. A successful operation remounts through explicit recovery. */
-    uint32_t deadline=ln_time_us()+10000000u;
-    int result=ln_block_quiesce(ln_time_us(),deadline);
-    while(!result){ln_storage_progress(0);result=ln_block_quiesce(ln_time_us(),deadline);}
-    if(result<0){error=601;return;}
-    if(success&&!ln_storage_recover())error=602;
-}
-#endif
 int ln_storage_recover(void){
     if(locked||pending||ln_storage_busy()||!ln_block_recover(ln_time_us()))return 0;
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_VIDEO)

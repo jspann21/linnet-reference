@@ -144,13 +144,6 @@ native power status.
 Protocol observations must be checked against the device's resources.
 Emulator responses are not hardware evidence.
 
-The tag-2 protocol was additionally checked against the locally extracted,
-verified RetailOS: surface allocation at 0x286CA8, pixel upload at 0x287BE8,
-and two-surface presentation at 0x164F44. Its damage helper at 0x164D68 takes
-the minimum starting row and maximum ending row; presentation saves the current
-original damage for the next frame. Vendor binaries remain outside the source
-tree. The VMCS display-clear iterator returns its own fixed object at
-0xC000FB50 rather than traversing independently allocated tag-2 elements.
 ## Fully resident HDD playback
 
 The optional 64 MiB clean-cache lease can keep a fully resident LCD video on
@@ -159,7 +152,7 @@ complete handle captured only after an ordinary OPEN succeeds in the current
 exclusive mount. A cache hit never renews that provenance. A replacement that
 fails or is canceled before its first picture, a direct-file override and
 accepted storage invalidation clear it. FAT mutations retire epochs before
-writing; raw maintenance abandons the mount. Directory bytes need not remain
+writing. Directory bytes need not remain
 in RAM, matching the existing authority of a current-epoch opened handle.
 Admission independently proves every published data sector, full mirrored
 FAT sector and exact file-chain end. It issues no

@@ -1,4 +1,4 @@
-"""Cancellable, validated source-video conversion using our canonical IPVF creator."""
+"""Cancellable, validated source-video conversion using the IPVF encoder."""
 from __future__ import annotations
 
 import json

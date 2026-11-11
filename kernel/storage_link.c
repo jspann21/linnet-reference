@@ -14,7 +14,6 @@
 #include "hal/api/platform.h"
 #include "hal/api/power.h"
 #if defined(LINNET_IMAGE_OS)
-#include "services/update/native.h"
 #include "kernel/runtime.h"
 #include "services/display/settings.h"
 #include "services/music/coverflow.h"
@@ -32,34 +31,18 @@
 #endif
 static uint8_t ln_storage_restart_pending;
 int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_storage_reply){
-    if(q->command<80||q->command>103||q->flags||!q->sequence||q->length>1024||(q->length&&!q->payload))return 0;
+    if(q->command<80||q->command>98||q->flags||!q->sequence||q->length>1024||(q->length&&!q->payload))return 0;
     uint32_t generation=ln_recovery_generation();
     r->command=q->command;r->sequence=q->sequence;r->flags=3;r->payload=ln_storage_reply;r->length=8;
     ln_write_le32(ln_storage_reply,generation);ln_write_le32(ln_storage_reply+4,0);
 #if defined(LINNET_VIDEO)
     /* Package validation uses STAGE, also owned by retained video records. */
-    if((q->command==87u||q->command==102u)&&(ln_video_active()||ln_video_playback_pending()))return 1;
+    if(q->command==87u&&(ln_video_active()||ln_video_playback_pending()))return 1;
 #endif
 #if defined(LINNET_AUDIO)
-    if((q->command==87u||q->command==102u)&&ln_player_busy())return 1;
+    if(q->command==87u&&ln_player_busy())return 1;
 #endif
     switch(q->command){
-#if defined(LINNET_IMAGE_OS)
-    case 100:
-        if(q->length!=40||ln_read_le32(q->payload)!=generation||!ln_native_begin(ln_read_le32(q->payload+4),q->payload+8))return 1;
-        break;
-    case 101:{
-        if(q->length<=8||q->length>1016||ln_read_le32(q->payload)!=generation)return 1;
-        uint32_t offset=ln_read_le32(q->payload+4),n=q->length-8;
-        if(!ln_native_write(offset,q->payload+8,n))return 1;
-        ln_write_le32(ln_storage_reply+4,offset+n);break;}
-    case 102:
-        if(q->length!=4||ln_read_le32(q->payload)!=generation||!ln_native_apply())return 1;
-        break;
-    case 103:{
-        if(q->length)return 1;uint32_t words[16];ln_native_status(words);
-        for(unsigned i=0;i<16;++i)ln_write_le32(ln_storage_reply+i*4,words[i]);r->length=64;break;}
-#endif
     case 80:{
         if(q->length)return 1;uint32_t words[24];ln_storage_state(words);
         for(unsigned i=0;i<24;++i)ln_write_le32(ln_storage_reply+i*4,words[i]);r->length=96;break;}

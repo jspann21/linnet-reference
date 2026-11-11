@@ -137,10 +137,6 @@ unchanged offset and expected slot. It refreshes the read-only storage proof whe
 needed. An advanced offset, failed proof, write fault, or uncertain acknowledgement
 stops the transaction. BEGIN is never replayed.
 
-Native Boot maintenance accepts a fixed reviewed package on explicitly
-admitted hardware. It is separate from ordinary A/B OS updates; use the
-[bootstrap map](bootstrap-tooling.md) and matching recovery artifacts.
-
 ## Existing device checks
 
 - `platform-cycle`: input, framebuffer, presentation, sleep, and wake checks.

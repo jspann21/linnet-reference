@@ -3,26 +3,11 @@
 Use [Media Manager](media-manager.md) for supported installation. This map is for
 contributors working on the lower-level boot paths.
 
-The Photo fixed-layout device Boot writer is a separate source maintenance
-image. Ordinary User and Developer firmware retain the complete interface,
-Cover Flow cache and games; Media Manager's host installer and normal A/B OS
-updates do not need this writer. Build its dedicated configuration with:
-
-```powershell
-python linnet build --target photo4g-p98 --profile dev --kind os --native-maintenance --device-serial OBSERVED_USB_SERIAL --verify
-```
-
-The flag selects `config/photo-native-maintenance.toml`. This image is for the
-audited 64 GB Photo disk layout and original firmware hash accepted by the
-writer. Its existing disk, serial, backup and write checks still apply. The
-`device native-install` command checks for maintenance support before uploading
-anything. Maintenance images are not part of the User/Developer download set.
-
 | Stage | PortalPlayer targets | Classic S5L8702 |
 | --- | --- | --- |
 | Build | [Shared builder](../tools/studio/build.py) creates Boot/OS images. | Shared builder for ordinary images; [SRAM stage builder](../tools/studio/s5l_bootstrap.py) for initial bootstrap. |
 | Inspect and plan | [Installer](../tools/studio/installer.py) assesses the disk; [native bootstrap](../tools/studio/native_bootstrap.py) derives a backup-bound firmware-directory plan. | [S5L bootstrap](../tools/link/s5l_bootstrap.py) captures the device/USB context; [NOR maintenance](../tools/link/classic_nor.py) uses its separate plan. |
-| Transfer | [Link Session](../tools/link/session.py) handles ordinary uploads. [Native package](../tools/studio/native_package.py) builds the reviewed maintenance package. | BootROM/DFU transfers the temporary monitor; ordinary OS updates then use Link. |
+| Transfer | [Link Session](../tools/link/session.py) handles ordinary uploads. | BootROM/DFU transfers the temporary monitor; ordinary OS updates then use Link. |
 | Publish and recover | Candidate write and readback precede the directory change; restoration uses the saved original directory. | [Classic setup](../tools/studio/classic_setup.py) in Media Manager owns initial DFU entry, hardware checks, NOR backup/install and native Disk Mode OS publication. Recovery restores verified original flash through the SRAM monitor before cleanup. |
 
 PortalPlayer directory planning exposes `plan`, `apply`, and `restore` through
@@ -40,8 +25,7 @@ image. They prefer an all-zero extent, but can use nonzero trailing space when
 no zero-filled extent fits. Before writing, the installer verifies those bytes
 against the full saved firmware backup; it verifies the staged Boot before
 publishing the directory. Restoring the original directory leaves the staged
-bytes unreferenced and keeps every original firmware image intact. The
-native maintenance package still requires all-zero staging space.
+bytes unreferenced and keeps every original firmware image intact.
 
 Classic `install-nor` retains its original and installed flash snapshots under
 `%LOCALAPPDATA%/Linnet/Installer`, independently of build output. `preserve-apple`
