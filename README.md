@@ -1,3 +1,13 @@
+# Linnet development archive
+
+This repository preserves Linnet's development history for reference. It is
+archived and is not maintained.
+
+Use [jspann21/linnet](https://github.com/jspann21/linnet) for current source,
+documentation, downloads and contributions.
+
+---
+
 <a name="top"></a>
 
 <p align="center">
